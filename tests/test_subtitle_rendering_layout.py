@@ -1,30 +1,6 @@
-import ast
-import logging
-import os
-import pathlib
-import unicodedata
 import unittest
 
-
-def _load_task_processor_class():
-    module_path = pathlib.Path(__file__).resolve().parents[1] / 'modules' / 'task_manager.py'
-    source = module_path.read_text(encoding='utf-8')
-    module_ast = ast.parse(source, filename=str(module_path))
-    selected = [
-        node for node in module_ast.body
-        if isinstance(node, ast.ClassDef) and node.name == 'TaskProcessor'
-    ]
-    isolated_module = ast.Module(body=selected, type_ignores=[])
-    namespace = {
-        'os': os,
-        'unicodedata': unicodedata,
-        'logger': logging.getLogger('test_task_processor_layout'),
-    }
-    exec(compile(isolated_module, str(module_path), 'exec'), namespace)
-    return namespace['TaskProcessor']
-
-
-TaskProcessor = _load_task_processor_class()
+from modules.subtitle.ass_layout import SubtitleLayoutMixin as TaskProcessor
 
 
 class SubtitleRenderingLayoutTests(unittest.TestCase):

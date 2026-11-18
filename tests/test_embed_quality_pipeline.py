@@ -794,7 +794,7 @@ class EmbedRetryWiringTests(unittest.TestCase):
     def setUpClass(cls):
         path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'modules', 'task_manager.py')
+            'modules', 'media', 'embed.py')
         with open(path, encoding='utf-8') as handle:
             cls.source = handle.read()
         cls.normalized = ' '.join(cls.source.split())
