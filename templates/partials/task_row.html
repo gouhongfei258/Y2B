@@ -326,13 +326,13 @@
                     <i class="bi bi-eye me-1"></i> 审核
                 </a>
             {% elif task.status == 'pending' or task.status == 'failed' %}
-                <form method="post" action="{{ url_for('start_task_route', task_id=task.id) }}" class="m-0 p-0 d-inline">
+                <form method="post" action="{{ url_for('start_task_route', task_id=task.id) }}" class="m-0 p-0 d-inline" data-same-page="refresh-task" data-task-id="{{ task.id }}">
                     <button type="submit" class="btn btn-sm btn-primary d-flex align-items-center justify-content-center task-action-btn">
                         <i class="bi bi-play-fill me-1"></i> 开始
                     </button>
                 </form>
             {% elif task.status == 'ready_for_upload' %}
-                <form method="post" action="{{ url_for('force_upload_task_route', task_id=task.id) }}" class="m-0 p-0 d-inline">
+                <form method="post" action="{{ url_for('force_upload_task_route', task_id=task.id) }}" class="m-0 p-0 d-inline" data-same-page="refresh-task" data-task-id="{{ task.id }}">
                     <button type="submit" class="btn btn-sm btn-success d-flex align-items-center justify-content-center task-action-btn">
                         <i class="bi bi-cloud-upload me-1"></i> 上传到{{ '双平台' if target == 'both' else ('bilibili' if target == 'bilibili' else 'AcFun') }}
                     </button>

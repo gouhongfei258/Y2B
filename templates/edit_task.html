@@ -21,7 +21,7 @@
                         <p><strong>任务ID:</strong> {{ task.id }}</p>
                         <p><strong>创建时间:</strong> {{ task.created_at }}</p>
                         <p><strong>状态:</strong> 
-                            <span class="badge rounded-pill bg-{{ task_status_color(task.status) }} task-status-badge">
+                            <span id="edit-task-status-badge" class="badge rounded-pill bg-{{ task_status_color(task.status) }} task-status-badge">
                                 {{ task_status_display(task.status) }}
                             </span>
                         </p>
@@ -34,13 +34,10 @@
                     <div class="card-header">
                         视频封面
                     </div>
-                    {% if has_cover_preview %}
-                        <img src="{{ url_for('get_task_cover', task_id=task.id) }}" class="card-img-top" alt="视频封面">
-                    {% else %}
-                        <div class="card-body text-muted">
-                            当前任务暂无可预览封面。
-                        </div>
-                    {% endif %}
+                    <img id="task-cover-preview" {% if has_cover_preview %}src="{{ url_for('get_task_cover', task_id=task.id) }}"{% endif %} class="card-img-top {% if not has_cover_preview %}d-none{% endif %}" alt="视频封面">
+                    <div id="task-cover-placeholder" class="card-body text-muted {% if has_cover_preview %}d-none{% endif %}">
+                        当前任务暂无可预览封面。
+                    </div>
                     <div class="card-body">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="cover-mode-switch" 
@@ -53,10 +50,10 @@
 
                         <hr>
 
-                        <div class="small text-muted mb-2">
+                        <div class="small text-muted mb-2" data-cover-filename>
                             当前生效文件: {{ current_cover_filename or '未检测到封面文件' }}
                         </div>
-                        <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" enctype="multipart/form-data" class="mb-2">
+                        <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" enctype="multipart/form-data" class="mb-2" data-same-page="edit-task">
                             <input type="hidden" name="action" value="replace_cover">
                             <label for="cover_file" class="form-label">更换视频封面</label>
                             <input class="form-control" type="file" id="cover_file" name="cover_file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required>
@@ -66,12 +63,12 @@
                             </button>
                         </form>
 
-                        <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}">
+                        <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" data-same-page="edit-task">
                             <input type="hidden" name="action" value="restore_cover">
-                            <button type="submit" class="btn btn-sm btn-outline-secondary" {% if not (has_original_cover_backup and is_custom_cover_active) %}disabled{% endif %}>
+                            <button type="submit" id="restore-cover-btn" class="btn btn-sm btn-outline-secondary" {% if not (has_original_cover_backup and is_custom_cover_active) %}disabled{% endif %}>
                                 <i class="bi bi-arrow-counterclockwise me-1"></i>恢复原封面
                             </button>
-                            <div class="form-text mt-1">
+                            <div class="form-text mt-1" data-cover-hint>
                                 {% if has_original_cover_backup %}
                                     {% if is_custom_cover_active %}
                                         已检测到原始封面备份，可恢复。
@@ -172,18 +169,16 @@
             
             <!-- 右侧编辑表单 -->
             <div class="col-md-8">
-                <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" id="task-edit-form">
+                <form method="post" action="{{ url_for('edit_task', task_id=task.id) }}" id="task-edit-form" data-same-page="edit-task">
                     <input type="hidden" name="default_action" value="save_metadata">
                     <div class="card mb-4">
                         <div class="card-header">
                             编辑视频信息
                         </div>
                         <div class="card-body">
-                            {% if task.error_message %}
-                                <div class="alert alert-warning">
-                                    <i class="bi bi-exclamation-triangle me-1"></i>{{ task.error_message }}
-                                </div>
-                            {% endif %}
+                            <div class="alert alert-warning {% if not task.error_message %}d-none{% endif %}" id="edit-task-error">
+                                <i class="bi bi-exclamation-triangle me-1"></i><span data-error-text>{{ task.error_message or '' }}</span>
+                            </div>
                             <div class="mb-3">
                                 <label for="video_title_translated" class="form-label">视频标题</label>
                                 <input type="text" class="form-control" id="video_title_translated" name="video_title_translated" 
@@ -341,11 +336,7 @@
                     <div class="mt-3">
                         <div class="alert alert-info small mb-0">
                             <i class="bi bi-info-circle"></i> “保存修改”只更新标题、描述、分区和标签；“上传到{{ '双平台' if (upload_target|default('acfun')) == 'both' else ('bilibili' if (upload_target|default('acfun')) == 'bilibili' else 'AcFun') }}”会先保存当前修改，再在后台启动上传。
-                            {% if can_upload %}
-                                <br><strong>当前状态：{{ task_status_display(task.status) }}，可以直接上传。</strong>
-                            {% else %}
-                                <br><strong>当前状态：{{ task_status_display(task.status) }}，请先等待任务处理完成，或先保存使其进入可上传状态。</strong>
-                            {% endif %}
+                            <br><strong id="edit-task-status-note">{% if can_upload %}当前状态：{{ task_status_display(task.status) }}，可以直接上传。{% else %}当前状态：{{ task_status_display(task.status) }}，请先等待任务处理完成，或先保存使其进入可上传状态。{% endif %}</strong>
                         </div>
                     </div>
                 </form>
@@ -486,19 +477,85 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // 刷新页面以显示新封面
-                        location.reload();
-                    } else {
-                        alert('更新封面处理模式失败: ' + data.message);
+                        const label = document.querySelector('label[for="cover-mode-switch"]');
+                        if (label) {
+                            label.textContent = '使用裁剪模式 (当前: ' + (newMode === 'crop' ? '裁剪' : '填充') + ')';
+                        }
+                        if (window.y2bShowToast) {
+                            window.y2bShowToast('success', data.message || '封面处理模式已更新。');
+                        }
+                    } else if (window.y2bShowToast) {
+                        window.y2bShowToast('danger', '更新封面处理模式失败: ' + (data.message || ''));
                     }
                 })
                 .catch(error => {
                     console.error('更新封面处理模式出错:', error);
-                    alert('更新失败: ' + error);
+                    if (window.y2bShowToast) {
+                        window.y2bShowToast('danger', '更新失败: ' + error);
+                    }
                 });
             });
         }
         
+        function applyEditTaskState(data) {
+            if (!data) return;
+            const badge = document.getElementById('edit-task-status-badge');
+            if (badge && data.status_label) {
+                badge.textContent = data.status_label;
+                badge.className = 'badge rounded-pill task-status-badge bg-' + (data.status_color || 'secondary');
+            }
+            const note = document.getElementById('edit-task-status-note');
+            if (note && data.status_label) {
+                note.textContent = data.can_upload
+                    ? '当前状态：' + data.status_label + '，可以直接上传。'
+                    : '当前状态：' + data.status_label + '，请先等待任务处理完成，或先保存使其进入可上传状态。';
+            }
+            const uploadBtn = document.querySelector('#task-edit-form button[name="action"][value="force_upload"]');
+            if (uploadBtn && typeof data.can_upload === 'boolean') {
+                uploadBtn.disabled = !data.can_upload;
+            }
+            const errorBox = document.getElementById('edit-task-error');
+            if (errorBox) {
+                const errorText = errorBox.querySelector('[data-error-text]');
+                if (data.error_message) {
+                    errorBox.classList.remove('d-none');
+                    if (errorText) errorText.textContent = data.error_message;
+                } else {
+                    errorBox.classList.add('d-none');
+                    if (errorText) errorText.textContent = '';
+                }
+            }
+            const filename = document.querySelector('[data-cover-filename]');
+            if (filename) {
+                filename.textContent = '当前生效文件: ' + (data.current_cover_filename || '未检测到封面文件');
+            }
+            const hint = document.querySelector('[data-cover-hint]');
+            if (hint && data.cover_hint) hint.textContent = data.cover_hint;
+            const restoreBtn = document.getElementById('restore-cover-btn');
+            if (restoreBtn) {
+                restoreBtn.disabled = !(data.has_original_cover_backup && data.is_custom_cover_active);
+            }
+            const preview = document.getElementById('task-cover-preview');
+            const placeholder = document.getElementById('task-cover-placeholder');
+            if (data.has_cover_preview && data.cover_url && preview) {
+                const joiner = data.cover_url.indexOf('?') === -1 ? '?' : '&';
+                preview.src = data.cover_url + joiner + 't=' + Date.now();
+                preview.classList.remove('d-none');
+                if (placeholder) placeholder.classList.add('d-none');
+            } else if (preview && placeholder && data.has_cover_preview === false) {
+                preview.classList.add('d-none');
+                placeholder.classList.remove('d-none');
+            }
+        }
+
+        window.y2bSamePageHandlers = window.y2bSamePageHandlers || {};
+        window.y2bSamePageHandlers['edit-task'] = function(form, data) {
+            if (!data || data.success === false) return;
+            applyEditTaskState(data);
+            const fileInput = form ? form.querySelector('input[type="file"]') : null;
+            if (fileInput) fileInput.value = '';
+        };
+
         updateTagsDisplay();
     });
 </script>
