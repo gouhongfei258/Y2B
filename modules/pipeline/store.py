@@ -195,6 +195,20 @@ def init_db():
 
         cursor.execute("PRAGMA table_info(tasks)")
         columns = [row[1] for row in cursor.fetchall()]
+        profile_columns = (
+            ("source_monitor_id", "ALTER TABLE tasks ADD COLUMN source_monitor_id TEXT"),
+            ("upload_template_id", "ALTER TABLE tasks ADD COLUMN upload_template_id TEXT"),
+            ("bilibili_account_id", "ALTER TABLE tasks ADD COLUMN bilibili_account_id TEXT"),
+            ("upload_profile_json", "ALTER TABLE tasks ADD COLUMN upload_profile_json TEXT"),
+        )
+        for column_name, statement in profile_columns:
+            if column_name not in columns:
+                cursor.execute(statement)
+                logger.info("数据库升级：添加%s字段", column_name)
+                conn.commit()
+
+        cursor.execute("PRAGMA table_info(tasks)")
+        columns = [row[1] for row in cursor.fetchall()]
 
         # 历史任务分区字段回填迁移：仅执行一次，避免重复全表扫描
         cursor.execute(
@@ -390,23 +404,50 @@ def get_db_connection():
         logger.debug(f"设置SQLite连接参数失败，将使用默认参数: {e}")
     return conn
 
-def add_task(youtube_url, upload_target=None):
+def add_task(youtube_url, upload_target=None, monitor_id=None, template_id=None):
     """
     添加新任务到数据库
     
     Args:
         youtube_url: YouTube视频URL
-        upload_target: 投稿平台(acfun|bilibili|both)，为空则使用配置默认值
+        upload_target: 投稿平台(acfun|bilibili|both)。传入时作为任务级覆盖；
+            为空则使用模板或全局默认。
+        monitor_id: 来源监控配置 id。同一配置里的多个频道共用一个模板。
+        template_id: 任务级模板。空表示按监控绑定，再没有就用默认模板。
         
     Returns:
         task_id: 新创建的任务ID
     """
     task_id = str(uuid.uuid4())
     normalized_target = _public().normalize_upload_target(upload_target)
+    source_monitor_id = "" if monitor_id is None else str(monitor_id)
+    upload_template_id = ""
+    bilibili_account_id = ""
+    upload_profile_json = ""
     conn = _public().get_db_connection()
     
     try:
-        if not upload_target:
+        profile = None
+        try:
+            from modules.config_manager import load_config
+            from modules.upload_templates import dump_profile, resolve_upload_profile
+            cfg = load_config()
+            profile = resolve_upload_profile(
+                cfg,
+                template_id=template_id,
+                monitor_id=monitor_id,
+                upload_target_override=upload_target,
+            )
+        except Exception as exc:
+            logger.warning("解析投稿模板失败，任务将按当前全局设置入队: %s", exc)
+            cfg = None
+            profile = None
+        if profile:
+            normalized_target = _public().normalize_upload_target(profile.get("upload_target"))
+            upload_template_id = str(profile.get("template_id") or "")
+            bilibili_account_id = str(profile.get("bilibili_account_id") or "")
+            upload_profile_json = dump_profile(profile)
+        elif not upload_target:
             try:
                 from modules.config_manager import load_config
                 cfg = load_config()
@@ -414,8 +455,20 @@ def add_task(youtube_url, upload_target=None):
             except Exception:
                 normalized_target = _public().UPLOAD_TARGET_ACFUN
         conn.execute(
-            'INSERT INTO tasks (id, youtube_url, upload_target, status) VALUES (?, ?, ?, ?)',
-            (task_id, youtube_url, normalized_target, _public().TASK_STATES['PENDING'])
+            '''INSERT INTO tasks (
+                id, youtube_url, upload_target, status,
+                source_monitor_id, upload_template_id, bilibili_account_id, upload_profile_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (
+                task_id,
+                youtube_url,
+                normalized_target,
+                _public().TASK_STATES['PENDING'],
+                source_monitor_id or None,
+                upload_template_id or None,
+                bilibili_account_id or None,
+                upload_profile_json or None,
+            )
         )
         conn.commit()
         logger.info(f"新任务添加成功, ID: {task_id}, URL: {youtube_url}, 平台: {normalized_target}")
@@ -529,6 +582,10 @@ def update_task(task_id, silent=False, **kwargs):
         'asr_warning_message': 'asr_warning_message = ?',
         'subtitle_warning_message': 'subtitle_warning_message = ?',
         'subtitle_quality_state': 'subtitle_quality_state = ?',
+        'source_monitor_id': 'source_monitor_id = ?',
+        'upload_template_id': 'upload_template_id = ?',
+        'bilibili_account_id': 'bilibili_account_id = ?',
+        'upload_profile_json': 'upload_profile_json = ?',
     }
 
     # 过滤掉不在白名单中的列

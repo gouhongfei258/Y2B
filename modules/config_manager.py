@@ -188,9 +188,13 @@ DEFAULT_CONFIG = {
     "LOGIN_SESSION_TIMEOUT_MINUTES": 30,  # 登录空闲超时时长（分钟）
     "YOUTUBE_COOKIES_PATH": "cookies/yt_cookies.txt", # 相对于项目根目录
     "ACFUN_COOKIES_PATH": "cookies/ac_cookies.json", # AcFun Cookie文件路径
-    "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径
+    "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径（默认账号）
     # bilibili 投稿通道：auto（优先必剪，失败回退 Web）/ bcut_pc / web
     "BILIBILI_SUBMIT_API": "auto",
+    # 这些冷却按 bilibili 账号分别计时，只暂停触发的那个账号。
+    "BILIBILI_PREUPLOAD_COOLDOWN_MINUTES": 30,  # preupload HTTP 406
+    "BILIBILI_SUBMIT_COOLDOWN_MINUTES": 15,  # 投稿 code 137022
+    "BILIBILI_RISK_COOLDOWN_MINUTES": 30,  # 投稿 code 603
     # CookieCloud（首版仅用于手动拉取 YouTube Cookies）
     "COOKIECLOUD_ENABLED": False,
     "COOKIECLOUD_SERVER_URL": "",

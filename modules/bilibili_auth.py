@@ -31,10 +31,13 @@ def _run_async(coro):
     try:
         return asyncio.run(coro)
     except RuntimeError:
-        # 已有事件循环时（如嵌套调用），在新线程中运行
+        # 已有事件循环时（如嵌套调用），在新线程中运行。
+        # 新线程默认拿不到当前 contextvar，这里把账号代理范围一起带过去。
         import concurrent.futures
+        import contextvars
+        ctx = contextvars.copy_context()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
+            return pool.submit(ctx.run, asyncio.run, coro).result()
 
 
 def _parse_cookies_text(content: str) -> Dict[str, str]:
@@ -176,7 +179,7 @@ def validate_credential(credential: Credential) -> Tuple[bool, str]:
     return True, "credential 有效"
 
 
-async def _check_credential_remote(credential: Credential) -> bool:
+async def _fetch_nav_payload(credential: Credential) -> dict:
     cookies = await credential.get_buvid_cookies()
     resp = await get_client().request(
         method="GET",
@@ -185,10 +188,26 @@ async def _check_credential_remote(credential: Credential) -> bool:
         cookies=cookies,
     )
     if resp.code != 200:
-        return False
+        return {}
     data = resp.json()
-    body = data.get("data") or {}
-    return data.get("code") == 0 and bool(body.get("isLogin"))
+    if not isinstance(data, dict):
+        return {}
+    body = data.get("data") if isinstance(data.get("data"), dict) else {}
+    return {
+        "is_login": data.get("code") == 0 and bool(body.get("isLogin")),
+        "mid": str(body.get("mid") or ""),
+        "uname": str(body.get("uname") or ""),
+    }
+
+
+async def _fetch_nav_profile(credential: Credential) -> dict:
+    """读取登录用户的 mid 和昵称，便于在账号列表里区分。"""
+    return await _fetch_nav_payload(credential)
+
+
+async def _check_credential_remote(credential: Credential) -> bool:
+    payload = await _fetch_nav_payload(credential)
+    return bool(payload.get("is_login"))
 
 
 def validate_credential_remote(credential: Credential) -> Tuple[bool, str]:
@@ -308,16 +327,26 @@ def save_credential_to_file(credential: Credential, cookie_file: str) -> bool:
 class BilibiliQrLoginSession:
     """In-memory Bilibili QR login session wrapper."""
 
-    def __init__(self):
+    def __init__(self, proxy: str = "", trust_env: bool = True):
         configure_bilibili_runtime()
         self.created_at = int(time.time())
         self.qr = login_v2.QrCodeLogin()
         self.generated = False
         self.last_state = None
+        self.proxy = proxy or ""
+        # 账号关闭代理时 trust_env 必须是 False，避免扫码走进程环境变量。
+        self.trust_env = bool(trust_env)
+
+    def _in_scope(self, func):
+        from .bili_sdk.utils.network import bili_request_scope
+        proxy = getattr(self, "proxy", "") or ""
+        trust_env = bool(getattr(self, "trust_env", True))
+        with bili_request_scope(proxy, trust_env):
+            return func()
 
     def generate(self) -> Dict[str, str]:
         try:
-            _run_async(self.qr.generate_qrcode())
+            self._in_scope(lambda: _run_async(self.qr.generate_qrcode()))
         except ArgsException as e:
             raise RuntimeError(str(e))
         self.generated = True
@@ -334,7 +363,7 @@ class BilibiliQrLoginSession:
             return {"status": "not_started"}
 
         try:
-            event = _run_async(self.qr.check_state())
+            event = self._in_scope(lambda: _run_async(self.qr.check_state()))
         except ArgsException as e:
             raise RuntimeError(str(e))
 
@@ -344,7 +373,7 @@ class BilibiliQrLoginSession:
 
         if status == login_v2.QrCodeLoginEvents.DONE.value:
             credential = self.qr.get_credential()
-            ok, msg = validate_credential_remote(credential)
+            ok, msg = self._in_scope(lambda: validate_credential_remote(credential))
             if not ok:
                 payload["status"] = "failed"
                 payload["message"] = msg

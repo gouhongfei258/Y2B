@@ -59,6 +59,11 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.path.startswith('/upload-templates') %}active{% endif %}" href="{{ url_for('upload_templates_page') }}">
+                                <i class="bi bi-layout-text-window nav-icon"></i> 投稿模板
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if request.path == url_for('settings') %}active{% endif %}" href="{{ url_for('settings') }}">
                                 <i class="bi bi-sliders2 nav-icon"></i> 设置
                             </a>

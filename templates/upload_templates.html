@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}投稿模板 - Y2A-Auto{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1"><i class="bi bi-layout-text-window"></i> 投稿模板</h2>
+        <p class="text-muted mb-0">全局设置就是默认模板。不绑定模板时，标题、简介、分区、转载声明和默认账号都保持现在的行为。</p>
+    </div>
+    <button type="button" class="btn btn-primary" id="template-new"><i class="bi bi-plus-lg"></i> 新建模板</button>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="list-group" id="template-list">
+            {% for item in templates %}
+            <button type="button" class="list-group-item list-group-item-action" data-template-id="{{ item.id }}">{{ item.name }}</button>
+            {% else %}
+            <div class="text-muted" id="template-empty">还没有命名模板。新建一个，例如「科技频道」。</div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <form id="template-form" class="card">
+            <div class="card-body">
+                <input type="hidden" id="template-id">
+                <div class="mb-3">
+                    <label class="form-label" for="template-name">名称</label>
+                    <input class="form-control" id="template-name" placeholder="科技频道">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="template-title">标题模板</label>
+                    <input class="form-control" id="template-title" value="{title}">
+                    <div class="form-text">可用占位符：{title} {description} {url} {channel} {date}</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="template-description">简介模板</label>
+                    <textarea class="form-control" id="template-description" rows="4">{description}</textarea>
+                </div>
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="template-repost" checked>
+                    <label class="form-check-label" for="template-repost">追加转载声明</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="template-repost-text">自定义转载声明</label>
+                    <textarea class="form-control" id="template-repost-text" rows="2" placeholder="留空则使用「本视频转载自YouTube…」"></textarea>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="template-partition">分区策略</label>
+                        <select class="form-select" id="template-partition">
+                            <option value="inherit">继承全局</option>
+                            <option value="ai">AI 推荐</option>
+                            <option value="fixed">固定分区</option>
+                            <option value="ai_fallback">AI 推荐，置信度低时用固定分区</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="template-target">默认投稿平台</label>
+                        <select class="form-select" id="template-target">
+                            <option value="">继承全局</option>
+                            <option value="acfun">AcFun</option>
+                            <option value="bilibili">bilibili</option>
+                            <option value="both">双平台</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="template-acfun-partition">AcFun 固定分区 ID</label>
+                        <input class="form-control" id="template-acfun-partition">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="template-bili-partition">bilibili 固定分区 ID</label>
+                        <input class="form-control" id="template-bili-partition">
+                    </div>
+                </div>
+                <div class="mb-3 mt-3">
+                    <label class="form-label" for="template-tags">预设标签</label>
+                    <textarea class="form-control" id="template-tags" rows="3" placeholder="每行一个。留空表示这个模板不加预设标签。"></textarea>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label" for="template-translate">标题和简介翻译</label>
+                        <select class="form-select" id="template-translate">
+                            <option value="inherit">继承全局</option>
+                            <option value="on">开启</option>
+                            <option value="off">关闭</option>
+                        </select>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label" for="template-account">bilibili 账号</label>
+                        <select class="form-select" id="template-account">
+                            <option value="">默认账号</option>
+                            {% for account in accounts %}
+                            <option value="{{ account.id }}">{{ account.name }}{% if account.uname %}（{{ account.uname }}）{% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3 mt-3">
+                    <label class="form-label" for="template-tone">翻译语气</label>
+                    <textarea class="form-control" id="template-tone" rows="2" placeholder="例如：标题口语化，简介保留段落"></textarea>
+                </div>
+                <div class="border rounded p-3 bg-light mb-3">
+                    <div class="fw-semibold mb-2">预览</div>
+                    <div class="small text-muted mb-1">标题</div>
+                    <div id="preview-title" class="mb-2"></div>
+                    <div class="small text-muted mb-1">简介</div>
+                    <pre id="preview-description" class="mb-0 small"></pre>
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">保存模板</button>
+                    <button type="button" class="btn btn-outline-danger" id="template-delete">删除</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const templates = {{ templates|tojson }};
+    const byId = {};
+    templates.forEach(function (item) { byId[item.id] = item; });
+    const form = document.getElementById('template-form');
+    const fields = {
+        id: document.getElementById('template-id'),
+        name: document.getElementById('template-name'),
+        title: document.getElementById('template-title'),
+        description: document.getElementById('template-description'),
+        repost: document.getElementById('template-repost'),
+        repostText: document.getElementById('template-repost-text'),
+        partition: document.getElementById('template-partition'),
+        target: document.getElementById('template-target'),
+        acfun: document.getElementById('template-acfun-partition'),
+        bili: document.getElementById('template-bili-partition'),
+        tags: document.getElementById('template-tags'),
+        translate: document.getElementById('template-translate'),
+        account: document.getElementById('template-account'),
+        tone: document.getElementById('template-tone')
+    };
+    const toast = function (category, message) {
+        if (window.y2bShowToast) window.y2bShowToast(category, message);
+    };
+    function payload() {
+        return {
+            id: fields.id.value,
+            name: fields.name.value,
+            title_template: fields.title.value,
+            description_template: fields.description.value,
+            append_repost_notice: fields.repost.checked,
+            repost_notice_text: fields.repostText.value,
+            partition_strategy: fields.partition.value,
+            upload_target: fields.target.value,
+            fixed_partition_acfun: fields.acfun.value,
+            fixed_partition_bilibili: fields.bili.value,
+            preset_tags: fields.tags.value,
+            translate_enabled: fields.translate.value,
+            bilibili_account_id: fields.account.value,
+            tone_prompt: fields.tone.value
+        };
+    }
+    function fill(item) {
+        fields.id.value = item && item.id ? item.id : '';
+        fields.name.value = item ? item.name : '';
+        fields.title.value = item ? item.title_template : '{title}';
+        fields.description.value = item ? item.description_template : '{description}';
+        fields.repost.checked = !item || item.append_repost_notice !== false;
+        fields.repostText.value = item ? (item.repost_notice_text || '') : '';
+        fields.partition.value = item ? item.partition_strategy : 'inherit';
+        fields.target.value = item ? (item.upload_target || '') : '';
+        fields.acfun.value = item ? (item.fixed_partition_acfun || '') : '';
+        fields.bili.value = item ? (item.fixed_partition_bilibili || '') : '';
+        fields.tags.value = item ? (item.preset_tags || '') : '';
+        fields.translate.value = item ? (item.translate_enabled || 'inherit') : 'inherit';
+        fields.account.value = item ? (item.bilibili_account_id || '') : '';
+        fields.tone.value = item ? (item.tone_prompt || '') : '';
+        schedulePreview();
+    }
+    let previewTimer = null;
+    function schedulePreview() {
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(runPreview, 200);
+    }
+    function runPreview() {
+        fetch('/upload-templates/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(payload())
+        }).then(function (resp) { return resp.json(); }).then(function (data) {
+            if (!data.success) return;
+            document.getElementById('preview-title').textContent = data.title || '';
+            document.getElementById('preview-description').textContent = data.description || '';
+        }).catch(function () {});
+    }
+    document.getElementById('template-list').addEventListener('click', function (event) {
+        const button = event.target.closest('[data-template-id]');
+        if (!button) return;
+        fill(byId[button.getAttribute('data-template-id')]);
+    });
+    form.addEventListener('input', schedulePreview);
+    form.addEventListener('change', schedulePreview);
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        fetch('/upload-templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(payload())
+        }).then(function (resp) { return resp.json(); }).then(function (data) {
+            toast(data.success ? 'success' : 'danger', data.message || '保存失败');
+            if (!data.success) return;
+            byId[data.template.id] = data.template;
+            const list = document.getElementById('template-list');
+            const empty = document.getElementById('template-empty');
+            if (empty) empty.remove();
+            let button = list.querySelector('[data-template-id="' + data.template.id + '"]');
+            if (!button) {
+                button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'list-group-item list-group-item-action';
+                button.setAttribute('data-template-id', data.template.id);
+                list.appendChild(button);
+            }
+            button.textContent = data.template.name;
+            fill(data.template);
+        }).catch(function () { toast('danger', '保存模板失败'); });
+    });
+    document.getElementById('template-delete').addEventListener('click', function () {
+        if (!fields.id.value) return;
+        if (!window.confirm('删除这个模板？已入队的任务仍使用当时的快照。')) return;
+        fetch('/upload-templates/' + fields.id.value + '/delete', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' }
+        }).then(function (resp) { return resp.json(); }).then(function (data) {
+            toast(data.success ? 'success' : 'danger', data.message || '删除失败');
+            if (!data.success) return;
+            const button = document.querySelector('[data-template-id="' + fields.id.value + '"]');
+            if (button) button.remove();
+            delete byId[fields.id.value];
+            fill(null);
+        });
+    });
+    document.getElementById('template-new').addEventListener('click', function () { fill(null); fields.name.focus(); });
+    if (templates.length) fill(templates[0]);
+    else fill(null);
+})();
+</script>
+{% endblock %}

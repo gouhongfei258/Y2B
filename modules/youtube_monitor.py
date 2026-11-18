@@ -119,6 +119,7 @@ MONITOR_CONFIG_FIELD_DEFAULTS: Dict[str, Any] = {
     'historical_progress_date': '',
     'historical_offset': 0,
     'video_types': 'video,short,live',
+    'upload_template_id': '',
 }
 
 MONITOR_CONFIG_DB_FIELDS: Tuple[str, ...] = tuple(MONITOR_CONFIG_FIELD_DEFAULTS.keys())
@@ -270,6 +271,11 @@ class YouTubeMonitor:
             # 添加当前时间段处理偏移量字段
             try:
                 cursor.execute("ALTER TABLE monitor_configs ADD COLUMN historical_offset INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                cursor.execute("ALTER TABLE monitor_configs ADD COLUMN upload_template_id TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
             
@@ -1945,7 +1951,7 @@ class YouTubeMonitor:
 
         if not inserted:
             if auto_add_to_tasks and self._claim_video_task(video_info['id'], config_id):
-                task_id = self._add_video_to_tasks(video_info, auto_start=True)
+                task_id = self._add_video_to_tasks(video_info, auto_start=True, monitor_id=config_id)
                 if task_id:
                     try:
                         marked = self._mark_video_added_to_tasks(
@@ -1963,7 +1969,7 @@ class YouTubeMonitor:
         logger.info(f"视频已保存到历史记录: {video_info['title']}")
 
         if auto_add_to_tasks and self._claim_video_task(video_info['id'], config_id):
-            task_id = self._add_video_to_tasks(video_info, auto_start=True)
+            task_id = self._add_video_to_tasks(video_info, auto_start=True, monitor_id=config_id)
             if task_id:
                 try:
                     marked = self._mark_video_added_to_tasks(video_info['id'], config_id)
@@ -2010,11 +2016,11 @@ class YouTubeMonitor:
             conn.commit()
 
     
-    def _add_video_to_tasks(self, video_info, auto_start=True):
-        """将视频添加到任务队列"""
+    def _add_video_to_tasks(self, video_info, auto_start=True, monitor_id=None):
+        """将视频添加到任务队列。monitor_id 用来绑定这条监控配置的投稿模板。"""
         try:
             video_url = f"https://www.youtube.com/watch?v={video_info['id']}"
-            task_id = add_task(video_url)
+            task_id = add_task(video_url, monitor_id=monitor_id)
             
             if task_id:
                 logger.info(f"视频已添加到任务队列: {video_info['title']}, 任务ID: {task_id}")
@@ -2105,7 +2111,7 @@ class YouTubeMonitor:
                         logger.warning(f"读取配置文件失败: {str(e)}")
             
             logger.info(f"手动添加视频到任务队列")
-            task_id = self._add_video_to_tasks(video_info, auto_start=False)
+            task_id = self._add_video_to_tasks(video_info, auto_start=False, monitor_id=config_id)
             if task_id:
                 try:
                     marked = self._mark_video_added_to_tasks(video_id, config_id)

@@ -47,6 +47,8 @@ class SubtitleTranslationMixin:
         
         task_logger.info("开始翻译视频标题和描述")
         update_task(task_id, status=TASK_STATES['TRANSLATING'])
+        from modules.upload_templates import settings_for_task
+        runtime_config = settings_for_task(self.config, task)
         upload_target = _get_task_upload_target(task)
         effective_limits = _get_effective_metadata_limits(upload_target)
         
@@ -73,9 +75,10 @@ class SubtitleTranslationMixin:
         ):
             if prompt_key in self.config:
                 openai_config[prompt_key] = self.config[prompt_key]
+        openai_config['METADATA_TONE_PROMPT'] = runtime_config.get('METADATA_TONE_PROMPT', '')
         
-        translate_title = bool(self.config.get('TRANSLATE_TITLE', True) and task.get('video_title_original'))
-        translate_description = bool(self.config.get('TRANSLATE_DESCRIPTION', True) and task.get('description_original'))
+        translate_title = bool(runtime_config.get('TRANSLATE_TITLE', True) and task.get('video_title_original'))
+        translate_description = bool(runtime_config.get('TRANSLATE_DESCRIPTION', True) and task.get('description_original'))
 
         if not translate_title and not translate_description:
             task_logger.info("标题和描述翻译均已禁用或缺少原文，跳过")

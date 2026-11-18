@@ -46,6 +46,30 @@
                 </div>
             </div>
 
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-layout-text-window"></i> 投稿模板</h5>
+                </div>
+                <div class="card-body">
+                    <label for="upload_template_id" class="form-label">绑定模板</label>
+                    <select class="form-select" id="upload_template_id" name="upload_template_id">
+                        <option value="">默认模板（跟随全局设置）</option>
+                        {% for item in upload_templates or [] %}
+                        <option value="{{ item.id }}" {% if config and config.upload_template_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">这条配置里的全部频道共用一个模板。格式不同时请拆成多条监控配置。模板在视频入队时固定，之后修改模板不会改已经排队的任务。</div>
+                    <div class="border rounded p-3 bg-light mt-3">
+                        <div class="fw-semibold mb-2">预览</div>
+                        <div class="small text-muted">标题</div>
+                        <div id="monitor-preview-title" class="mb-2"></div>
+                        <div class="small text-muted">简介</div>
+                        <pre id="monitor-preview-description" class="mb-0 small"></pre>
+                    </div>
+                    <a class="btn btn-sm btn-outline-secondary mt-3" href="{{ url_for('upload_templates_page') }}">管理投稿模板</a>
+                </div>
+            </div>
+
             <!-- 监控类型选择 -->
             <div class="card mt-4">
                 <div class="card-header">
@@ -987,6 +1011,38 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // 切换“最新模式临时时间范围”的显示
+const monitorTemplates = {{ (upload_templates or [])|tojson }};
+const monitorDefaultTemplate = {{ (default_upload_profile or {})|tojson }};
+const monitorTemplateMap = {};
+monitorTemplates.forEach(function (item) { monitorTemplateMap[item.id] = item; });
+function refreshMonitorPreview() {
+    const select = document.getElementById('upload_template_id');
+    if (!select) return;
+    const chosen = monitorTemplateMap[select.value] || monitorDefaultTemplate || {
+        title_template: '{title}',
+        description_template: '{description}',
+        append_repost_notice: true,
+        repost_notice_text: ''
+    };
+    fetch('/upload-templates/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(chosen)
+    }).then(function (resp) { return resp.json(); }).then(function (data) {
+        if (!data.success) return;
+        const title = document.getElementById('monitor-preview-title');
+        const description = document.getElementById('monitor-preview-description');
+        if (title) title.textContent = data.title || '';
+        if (description) description.textContent = data.description || '';
+    }).catch(function () {});
+}
+document.addEventListener('DOMContentLoaded', function () {
+    const select = document.getElementById('upload_template_id');
+    if (!select) return;
+    select.addEventListener('change', refreshMonitorPreview);
+    refreshMonitorPreview();
+});
+
 function toggleLatestDateRange() {
     const checkbox = document.getElementById('latest_enable_date_range');
     const container = document.getElementById('latest_date_range');

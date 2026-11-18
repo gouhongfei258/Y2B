@@ -7,6 +7,7 @@ bilibili_api.utils.network
 import asyncio
 import atexit
 import binascii
+import contextvars
 import hashlib
 import hmac
 import io
@@ -19,6 +20,7 @@ import time
 import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import reduce
@@ -1074,6 +1076,55 @@ def get_registered_available_settings() -> Dict[str, List[str]]:
     return client_settings
 
 
+# 每个账号一份请求范围。空值表示沿用进程级 request_settings（旧行为）。
+# 范围里的 proxy / trust_env 只影响当前上下文，不会写回 request_settings，
+# 因此两个账号并发上传时不会互相改掉代理。
+_bili_request_scope: contextvars.ContextVar = contextvars.ContextVar(
+    "bili_request_scope",
+    default=None,
+)
+_scoped_clients: Dict[Tuple[Any, ...], BiliAPIClient] = {}
+
+
+@contextmanager
+def bili_request_scope(proxy: str = "", trust_env: bool = True):
+    """在当前上下文里固定代理和 trust_env。退出后恢复外层范围。"""
+    token = _bili_request_scope.set(
+        {
+            "proxy": proxy or "",
+            "trust_env": bool(trust_env),
+        }
+    )
+    try:
+        yield
+    finally:
+        _bili_request_scope.reset(token)
+
+
+def _client_kwargs_for_scope(scope: dict) -> dict:
+    kwargs = {}
+    for piece in client_settings[selected_client]:
+        kwargs[piece] = request_settings.get(piece)
+    kwargs["proxy"] = scope.get("proxy") or ""
+    kwargs["trust_env"] = bool(scope.get("trust_env"))
+    return kwargs
+
+
+def _get_scoped_client(scope: dict) -> BiliAPIClient:
+    loop = _get_or_create_event_loop()
+    key = (
+        selected_client,
+        id(loop),
+        scope.get("proxy") or "",
+        bool(scope.get("trust_env")),
+    )
+    session = _scoped_clients.get(key)
+    if session is None:
+        session = sessions[selected_client](**_client_kwargs_for_scope(scope))
+        _scoped_clients[key] = session
+    return session
+
+
 def get_client() -> BiliAPIClient:
     """
     在当前事件循环下获取模块正在使用的请求客户端
@@ -1085,6 +1136,9 @@ def get_client() -> BiliAPIClient:
         raise ArgsException(
             "尚未安装第三方请求库或未注册自定义第三方请求库。\n$ pip3 install (curl_cffi|httpx|aiohttp)"
         )
+    scope = _bili_request_scope.get()
+    if scope is not None:
+        return _get_scoped_client(scope)
     global session_pool
     pool = session_pool.get(selected_client)
     if pool is None:
@@ -2393,26 +2447,32 @@ class Api:
             "Api 发起请求",
             self.__dict__,
         )
-        legacy_proxy = None
-        if self.credential.proxy:
-            legacy_proxy = request_settings.get_proxy()
-            request_settings.set_proxy(self.credential.proxy)
-        config: dict = await self._prepare_request()
-        client: BiliAPIClient = get_client()
-        resp: BiliAPIResponse = await client.request(**config)
-        ret: Union[int, str, dict, bytes, None]
-        if byte:
-            ret = resp.raw
-        else:
-            ret = self._process_response(resp=resp, raw=raw)
-        request_log.dispatch(
-            "API_RESPONSE",
-            "Api 获得响应",
-            {"result": ret},
-        )
-        if self.credential.proxy:
-            request_settings.set_proxy(legacy_proxy)
-        return ret
+        # 凭据自带代理时进入独立范围，不再改进程级 request_settings。
+        # 外层已经设置了账号范围（包括“关闭代理 = 直连”）时保持外层，避免覆盖。
+        scope_token = None
+        credential_proxy = getattr(self.credential, "proxy", None)
+        if _bili_request_scope.get() is None and credential_proxy:
+            scope_token = _bili_request_scope.set(
+                {"proxy": credential_proxy, "trust_env": False}
+            )
+        try:
+            config: dict = await self._prepare_request()
+            client: BiliAPIClient = get_client()
+            resp: BiliAPIResponse = await client.request(**config)
+            ret: Union[int, str, dict, bytes, None]
+            if byte:
+                ret = resp.raw
+            else:
+                ret = self._process_response(resp=resp, raw=raw)
+            request_log.dispatch(
+                "API_RESPONSE",
+                "Api 获得响应",
+                {"result": ret},
+            )
+            return ret
+        finally:
+            if scope_token is not None:
+                _bili_request_scope.reset(scope_token)
 
     async def request(
         self, raw: bool = False, byte: bool = False

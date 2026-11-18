@@ -441,7 +441,10 @@ class UploadMixin:
         # 预设标签生效时同样要走标签阶段：即便「自动生成标签」关闭，也要把预设标签
         # 落到任务上（与 run_task 的阶段门控同口径）。这里只在标签为空时补跑，
         # 避免每次强制上传都重新调用标签 AI（已有标签的任务在上传路径仍会合并预设）。
-        preset_effective = is_preset_tags_effective(self.config)
+        from modules.upload_templates import settings_for_task
+        from modules.task_manager import _profile_needs_partition_stage
+        runtime_config = settings_for_task(self.config, task)
+        preset_effective = is_preset_tags_effective(runtime_config)
         if (self.config.get('GENERATE_TAGS', True) or preset_effective) and not tags:
             if _has_usable_text(task):
                 task_logger.info("强制上传前检测到标签为空，继续执行标签生成阶段")
@@ -449,7 +452,7 @@ class UploadMixin:
                 task = get_task(task_id) or task
                 completed_stages = _mark_stage_done(task_id, completed_stages, PIPELINE_STAGE_GENERATE_TAGS)
             elif preset_effective:
-                preset_only = parse_preset_tags(self.config.get('PRESET_TAGS', ''))
+                preset_only = parse_preset_tags(runtime_config.get('PRESET_TAGS', ''))
                 task_logger.warning("强制上传前标签缺失且缺少标题和简介，改为只写入预设标签")
                 update_task(
                     task_id,
@@ -464,7 +467,7 @@ class UploadMixin:
                 task = get_task(task_id) or task
                 completed_stages = _mark_stage_done(task_id, completed_stages, PIPELINE_STAGE_GENERATE_TAGS)
 
-        if self.config.get('RECOMMEND_PARTITION', False):
+        if runtime_config.get('RECOMMEND_PARTITION', False) or _profile_needs_partition_stage(runtime_config):
             task = get_task(task_id) or task
             upload_target = _get_task_upload_target(task)
             missing_partition_platforms = [
@@ -513,12 +516,23 @@ class UploadMixin:
                 task_logger.error("upload_semaphore 初始化失败，无法继续执行任务")
                 return
 
+        from modules.bilibili_accounts import account_upload_lock, resolve_task_account
+        account = resolve_task_account(task, self.config)
+        if self._defer_bilibili_cooldown(task_id, task_logger, account):
+            return
+
         task_logger.info("等待获取上传锁...")
         try:
             assert upload_semaphore is not None, "upload_semaphore 应该已经初始化"
             with upload_semaphore:
-                task_logger.info("获得上传锁，开始上传到 Bilibili")
-                self._do_upload_to_bilibili(task_id, task_logger, subtitle_prepared=subtitle_prepared)
+                task_logger.info("获得上传锁，开始排队该 bilibili 账号")
+                with account_upload_lock(str(account.get("id") or "")):
+                    task = get_task(task_id) or task
+                    if self._defer_bilibili_cooldown(task_id, task_logger, account):
+                        task_logger.info("该账号仍在冷却，已跳过本次投稿")
+                        return
+                    task_logger.info("获得该账号的上传锁，开始上传到 Bilibili")
+                    self._do_upload_to_bilibili(task_id, task_logger, subtitle_prepared=subtitle_prepared)
                 task_logger.info("释放上传锁")
         except Exception as e:
             task_logger.error(f"获取或使用上传锁时出错: {e}")
@@ -591,12 +605,14 @@ class UploadMixin:
         title = (task.get('video_title_translated', '') or task.get('video_title_original', '')) if task else ''
         description = (task.get('description_translated', '') or task.get('description_original', '')) if task else ''
         partition_id = _get_task_partition_id(task, UPLOAD_TARGET_ACFUN, prefer_selected=True) if task else ''
-        missing_translation_fields = _get_missing_required_translation_fields(task, self.config)
+        from modules.upload_templates import apply_metadata_templates, settings_for_task
+        runtime_config = settings_for_task(self.config, task)
+        missing_translation_fields = _get_missing_required_translation_fields(task, runtime_config)
         if missing_translation_fields:
             task_logger.warning(
                 f"当前上传路径存在缺失译文字段 {missing_translation_fields}，将回退原文继续上传"
             )
-        fixed_acfun_pid = str(self.config.get('FIXED_PARTITION_ID', '') or '').strip()
+        fixed_acfun_pid = str(runtime_config.get('FIXED_PARTITION_ID', '') or '').strip()
         if fixed_acfun_pid:
             partition_id = fixed_acfun_pid
         
@@ -636,7 +652,7 @@ class UploadMixin:
 
         # 解析标签（预设标签生效时：预设在前，其余标签紧随，并按 AcFun 上限截断）
         tags = resolve_upload_tags(
-            self.config,
+            runtime_config,
             task.get('tags_generated') if task else None,
             PLATFORM_ACFUN,
             logger_obj=task_logger,
@@ -657,6 +673,16 @@ class UploadMixin:
                     original_upload_date = metadata.get('upload_date', '')
             except Exception as e:
                 task_logger.error(f"读取视频元数据失败: {str(e)}")
+
+        profile = runtime_config.get("_UPLOAD_PROFILE")
+        title, description, repost_notice_text = apply_metadata_templates(
+            profile,
+            title,
+            description,
+            original_url or (task.get('youtube_url', '') if task else ''),
+            original_uploader,
+            original_upload_date,
+        )
 
         # 可选：将YouTube上传者名字放到标签第一位（注意标签数量限制）
         if self.config.get('YOUTUBE_UPLOADER_AS_FIRST_TAG', False):
@@ -681,7 +707,7 @@ class UploadMixin:
                 tags = upload_tags[:6]
                 try:
                     persist_base = resolve_upload_tags(
-                        self.config,
+                        runtime_config,
                         task.get('tags_generated') if task else None,
                         PLATFORM_BILIBILI,
                     )
@@ -775,7 +801,8 @@ class UploadMixin:
                 original_url=original_url,
                 original_uploader=original_uploader,
                 original_upload_date=original_upload_date,
-                upload_append_repost_notice=bool(self.config.get('UPLOAD_APPEND_REPOST_NOTICE', True)),
+                upload_append_repost_notice=bool(runtime_config.get('UPLOAD_APPEND_REPOST_NOTICE', True)),
+                repost_notice_text=repost_notice_text,
                 task_id=task_id,
                 cover_mode=cover_mode,
                 cancel_event=cancel_event
@@ -818,6 +845,21 @@ class UploadMixin:
                 status=TASK_STATES['FAILED'],
                 error_message=f"上传异常: {str(e)}"
             )
+
+    def _defer_bilibili_cooldown(self, task_id, task_logger, account) -> bool:
+        """冷却中的账号不发起任何 bilibili 请求。"""
+        from modules.bilibili_accounts import cooldown_block_message
+        message = cooldown_block_message(account, self.config)
+        if not message:
+            return False
+        task_logger.warning(message)
+        update_task(
+            task_id,
+            status=TASK_STATES['READY_FOR_UPLOAD'],
+            error_message=message,
+            upload_progress=None,
+        )
+        return True
 
     def _do_upload_to_bilibili(self, task_id, task_logger, subtitle_prepared=False):
         """实际执行上传到 Bilibili 的逻辑"""
@@ -873,9 +915,12 @@ class UploadMixin:
 
         update_task(task_id, status=TASK_STATES['UPLOADING'], upload_progress='0.0%')
 
+        from modules.upload_templates import apply_metadata_templates, settings_for_task
+        runtime_config = settings_for_task(self.config, task)
+
         # 解析标签（预设标签生效时：预设在前，其余标签紧随，并按 bilibili 上限截断）
         tags = resolve_upload_tags(
-            self.config,
+            runtime_config,
             task.get('tags_generated') if task else None,
             PLATFORM_BILIBILI,
             logger_obj=task_logger,
@@ -897,16 +942,26 @@ class UploadMixin:
                 task_logger.error(f"读取视频元数据失败: {str(e)}")
 
         # bilibili 转载页会单独展示 source，这里只保留说明文案和正文，避免 URL 重复出现。
+        profile = runtime_config.get("_UPLOAD_PROFILE")
+        repost_notice_text = ""
         try:
             from modules.bilibili_uploader import format_bilibili_description
-
+            title, description, repost_notice_text = apply_metadata_templates(
+                profile,
+                title,
+                description,
+                original_url,
+                original_uploader,
+                original_upload_date,
+            )
             description = format_bilibili_description(
                 base_desc=description,
                 original_url=original_url,
                 original_uploader=original_uploader,
                 original_upload_date=original_upload_date,
-                append_repost_notice=bool(self.config.get('UPLOAD_APPEND_REPOST_NOTICE', True)),
+                append_repost_notice=bool(runtime_config.get('UPLOAD_APPEND_REPOST_NOTICE', True)),
                 max_len=effective_limits['description_limit'],
+                repost_notice_text=repost_notice_text,
             )
         except Exception as e:
             task_logger.warning(f"构建bilibili投稿简介失败，回退原简介: {e}")
@@ -932,10 +987,38 @@ class UploadMixin:
                 except Exception:
                     pass
 
+        from modules.bilibili_accounts import (
+            record_account_cooldown,
+            request_scope_for_account,
+            resolve_task_account,
+        )
+        account = resolve_task_account(task, self.config)
+        try:
+            request_scope = request_scope_for_account(account)
+        except ValueError as exc:
+            task_logger.error(str(exc))
+            update_task(
+                task_id,
+                status=TASK_STATES['FAILED'],
+                error_message=str(exc),
+                upload_progress=None,
+            )
+            return
+        route_label = "独立代理" if request_scope.get("proxy") else "直连"
+        task_logger.info(
+            "本次 bilibili 投稿使用账号「%s」，网络：%s",
+            account.get("name") or account.get("id"),
+            route_label,
+        )
+        # 没有入队账号戳的旧任务继续用配置里的 Cookie 路径，避免改到已经在跑的单账号安装。
+        if str(task.get("bilibili_account_id") or "").strip():
+            cookie_path_value = account.get("cookie_path") or self.config.get("BILIBILI_COOKIES_PATH", "cookies/bili_cookies.json")
+        else:
+            cookie_path_value = self.config.get("BILIBILI_COOKIES_PATH", "cookies/bili_cookies.json")
         bilibili_cookies_path = resolve_cookie_file_path(
-            path_value=self.config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json'),
-            default_relative_path='cookies/bili_cookies.json',
-            service_name='Bilibili',
+            path_value=cookie_path_value,
+            default_relative_path="cookies/bili_cookies.json",
+            service_name="Bilibili",
             logger_obj=task_logger,
             allow_json_txt_fallback=False,
         )
@@ -946,7 +1029,7 @@ class UploadMixin:
             UPLOAD_TARGET_BILIBILI,
             prefer_selected=True,
         ) if task else ''
-        fixed_bili_pid = str(self.config.get('FIXED_PARTITION_ID_BILIBILI', '') or '').strip()
+        fixed_bili_pid = str(runtime_config.get('FIXED_PARTITION_ID_BILIBILI', '') or '').strip()
         partition_id = fixed_bili_pid or task_partition_id
         try:
             from modules.bilibili_zones import collect_valid_tids
@@ -1009,6 +1092,7 @@ class UploadMixin:
                 cookie_file=bilibili_cookies_path,
                 submit_api=self.config.get('BILIBILI_SUBMIT_API', 'auto'),
             )
+            uploader.request_scope = request_scope
             last_progress_text = '0.0%'
 
             def _normalize_progress_text(progress_text):
@@ -1053,6 +1137,13 @@ class UploadMixin:
                 title_limit=effective_limits['title_limit'],
                 description_limit=effective_limits['description_limit'],
             )
+            for risk_code in getattr(uploader, "risk_codes", ()) or ():
+                record_account_cooldown(str(account.get("id") or ""), risk_code, self.config)
+                task_logger.warning(
+                    "账号「%s」触发 %s，已开始该账号的冷却，其他账号继续投稿",
+                    account.get("name") or account.get("id"),
+                    risk_code,
+                )
 
             if success:
                 task_logger.info(f"bilibili上传成功: {result}")

@@ -326,26 +326,32 @@ def _cleanup_bilibili_qr_sessions():
             _BILIBILI_QR_SESSIONS.pop(sid, None)
 
 
-def _create_bilibili_qr_session():
+def _create_bilibili_qr_session(account_id=None, proxy="", trust_env=True):
     _cleanup_bilibili_qr_sessions()
     session_id = str(uuid.uuid4())
-    session_obj = BilibiliQrLoginSession()
+    session_obj = BilibiliQrLoginSession(proxy=proxy, trust_env=trust_env)
     with _BILIBILI_QR_SESSION_LOCK:
         _BILIBILI_QR_SESSIONS[session_id] = {
             'created_at': time.time(),
             'session': session_obj,
+            'account_id': account_id,
             'success_notified': False,
             'failure_notified': False,
         }
     return session_id, session_obj
 
 
-def _get_bilibili_qr_session(session_id: str):
+def _get_bilibili_qr_record(session_id: str):
     if not session_id:
         return None
     _cleanup_bilibili_qr_sessions()
     with _BILIBILI_QR_SESSION_LOCK:
         item = _BILIBILI_QR_SESSIONS.get(session_id)
+    return item
+
+
+def _get_bilibili_qr_session(session_id: str):
+    item = _get_bilibili_qr_record(session_id)
     if not item:
         return None
     return item.get('session')
@@ -969,6 +975,9 @@ SETTINGS_CHECKBOX_FIELDS = list(dict.fromkeys([
 
 SETTINGS_INT_FIELDS = list(dict.fromkeys([
     'MAX_CONCURRENT_TASKS', 'MAX_CONCURRENT_UPLOADS',
+    'BILIBILI_PREUPLOAD_COOLDOWN_MINUTES',
+    'BILIBILI_SUBMIT_COOLDOWN_MINUTES',
+    'BILIBILI_RISK_COOLDOWN_MINUTES',
     'LOG_CLEANUP_HOURS', 'LOG_CLEANUP_INTERVAL',
     'DOWNLOAD_CLEANUP_HOURS', 'DOWNLOAD_CLEANUP_INTERVAL',
     'SUBTITLE_BATCH_SIZE', 'SUBTITLE_MAX_RETRIES',
@@ -1049,6 +1058,9 @@ SETTINGS_RANGE_GUARDS = (
     ('SUBTITLE_BACKGROUND_OPACITY', 0.0, 1.0),
     # 编码质量（manual 模式下的 CRF/CQ/QP）
     ('VIDEO_QUALITY_VALUE', 0.0, 51.0),
+    ('BILIBILI_PREUPLOAD_COOLDOWN_MINUTES', 1.0, 1440.0),
+    ('BILIBILI_SUBMIT_COOLDOWN_MINUTES', 1.0, 1440.0),
+    ('BILIBILI_RISK_COOLDOWN_MINUTES', 1.0, 1440.0),
 )
 
 # 回退提示里的中文名称（取自设置页控件文案），仅用于让用户看懂被改了哪一项。
@@ -1082,6 +1094,9 @@ SETTINGS_GUARD_LABELS = {
     'SUBTITLE_BACKGROUND_OPACITY': '字幕背景不透明度',
     # 编码质量
     'VIDEO_QUALITY_VALUE': '画质数值（CRF/CQ/QP）',
+    'BILIBILI_PREUPLOAD_COOLDOWN_MINUTES': 'bilibili 406 冷却（分钟）',
+    'BILIBILI_SUBMIT_COOLDOWN_MINUTES': 'bilibili 137022 冷却（分钟）',
+    'BILIBILI_RISK_COOLDOWN_MINUTES': 'bilibili 603 冷却（分钟）',
 }
 
 
@@ -1452,6 +1467,11 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
+        try:
+            from modules.bilibili_accounts import sync_default_cookie_path
+            sync_default_cookie_path(updated_config)
+        except Exception as exc:
+            logger.warning("同步默认 bilibili 账号 Cookie 路径失败: %s", exc)
 
         try:
             from modules.task_manager import get_global_task_processor
@@ -2297,7 +2317,20 @@ def index():
         }
         recent_tasks = []
 
-    return render_template('index.html', stats=stats, recent_tasks=recent_tasks)
+    try:
+        from modules.bilibili_accounts import homepage_cooldown_notices
+        from modules.config_manager import load_config
+        bilibili_cooldowns = homepage_cooldown_notices(load_config())
+    except Exception as exc:
+        logger.warning("读取 bilibili 账号冷却失败: %s", exc)
+        bilibili_cooldowns = []
+
+    return render_template(
+        'index.html',
+        stats=stats,
+        recent_tasks=recent_tasks,
+        bilibili_cooldowns=bilibili_cooldowns,
+    )
 
 @app.route('/tasks')
 @login_required
@@ -2312,11 +2345,17 @@ def tasks():
     # 获取分页数据
     pagination_data = get_tasks_paginated(page=page, per_page=per_page)
     config = load_config()
+    try:
+        from modules.upload_templates import list_templates
+        upload_templates = list_templates()
+    except Exception:
+        upload_templates = []
     
     return render_template('tasks.html', 
                          tasks=pagination_data['tasks'],
                          pagination=pagination_data,
-                         config=config)
+                         config=config,
+                         upload_templates=upload_templates)
 
 
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:
@@ -2742,6 +2781,9 @@ def add_task_route():
     """添加新任务，支持播放列表批量添加"""
     youtube_url = request.form.get('youtube_url')
     upload_target = request.form.get('upload_target')
+    template_id = request.form.get('template_id') or None
+    if template_id == 'default':
+        template_id = 'default'
 
     def finish(message, category, **kwargs):
         return _respond_page_action(message, category, endpoint='tasks', **kwargs)
@@ -2765,12 +2807,12 @@ def add_task_route():
             return finish('未能提取到播放列表中的视频', 'danger', success=False)
         added_count = 0
         for url in video_urls:
-            task_id = add_task(url, upload_target=upload_target)
+            task_id = add_task(url, upload_target=upload_target, template_id=template_id)
             if task_id:
                 added_count += 1
         return finish(f'已批量添加 {added_count} 个视频任务（来自播放列表）', 'success', extra={'count': added_count})
     else:
-        task_id = add_task(youtube_url, upload_target=upload_target)
+        task_id = add_task(youtube_url, upload_target=upload_target, template_id=template_id)
         if task_id:
             if config.get('AUTO_MODE_ENABLED', False):
                 logger.info(f"自动模式已启用，立即开始处理任务 {task_id}")
@@ -3514,6 +3556,12 @@ def settings():
     except Exception as exc:
         logger.debug("获取内置 Prompt 预览失败，将不显示预览: %s", exc)
         builtin_prompts = {}
+    try:
+        from modules.bilibili_accounts import list_accounts, public_account
+        bilibili_accounts = [public_account(item) for item in list_accounts(config)]
+    except Exception as exc:
+        logger.warning("读取 bilibili 账号列表失败: %s", exc)
+        bilibili_accounts = []
     return render_template(
         'settings.html',
         config=config,
@@ -3523,6 +3571,7 @@ def settings():
         acfun_partition_mapping=acfun_partition_mapping,
         bilibili_partition_mapping=bilibili_partition_mapping,
         builtin_prompts=builtin_prompts,
+        bilibili_accounts=bilibili_accounts,
     )
 
 
@@ -3839,23 +3888,52 @@ def acfun_qrcode_status(session_id):
 
 @app.route('/settings/bilibili/qrcode/start', methods=['POST'])
 @login_required
-def bilibili_qrcode_start():
-    """发起 bilibili 二维码登录并返回二维码图片。"""
-    config = load_config()
-    cookie_path = resolve_cookie_file_path(
-        path_value=config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json'),
-        default_relative_path='cookies/bili_cookies.json',
-        service_name='Bilibili',
-        logger_obj=logger,
-        allow_json_txt_fallback=False
+def _bilibili_account_from_request(config):
+    from modules.bilibili_accounts import get_account, get_default_account, request_scope_for_account
+    payload = request.get_json(silent=True) or {}
+    account_id = (
+        request.form.get('account_id')
+        or request.args.get('account_id')
+        or payload.get('account_id')
+        or ''
     )
+    account = get_account(str(account_id).strip(), config) if str(account_id).strip() else None
+    if account is None:
+        account = get_default_account(config)
+    scope = request_scope_for_account(account)
+    return account, scope
+
+
+def bilibili_qrcode_start():
+    """发起 bilibili 二维码登录并返回二维码图片。只写入指定账号的 Cookie 文件。"""
+    config = load_config()
+    try:
+        account, scope = _bilibili_account_from_request(config)
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    from modules.bilibili_accounts import account_cookie_file
+    cookie_path = resolve_cookie_file_path(
+        path_value=account.get("cookie_path") or config.get("BILIBILI_COOKIES_PATH", "cookies/bili_cookies.json"),
+        default_relative_path="cookies/bili_cookies.json",
+        service_name="Bilibili",
+        logger_obj=logger,
+        allow_json_txt_fallback=False,
+    )
+    if not cookie_path:
+        cookie_path = account_cookie_file(account, config)
 
     try:
-        session_id, qr_session = _create_bilibili_qr_session()
+        session_id, qr_session = _create_bilibili_qr_session(
+            account_id=account.get('id'),
+            proxy=scope.get('proxy') or '',
+            trust_env=bool(scope.get('trust_env')),
+        )
         qr_data = qr_session.generate()
         return jsonify({
             'success': True,
             'session_id': session_id,
+            'account_id': account.get('id'),
+            'account_name': account.get('name') or '',
             'image_base64': qr_data.get('image_base64', ''),
             'mime_type': qr_data.get('mime_type', 'image/png'),
             'expires_in': _BILIBILI_QR_SESSION_TTL_SECONDS,
@@ -3869,21 +3947,35 @@ def bilibili_qrcode_start():
 @login_required
 def bilibili_qrcode_status(session_id):
     """轮询 bilibili 二维码登录状态。"""
-    qr_session = _get_bilibili_qr_session(session_id)
+    record = _get_bilibili_qr_record(session_id)
+    qr_session = record.get('session') if record else None
     if not qr_session:
         return jsonify({'success': False, 'message': '二维码会话不存在或已过期'}), 404
 
     config = load_config()
+    from modules.bilibili_accounts import account_cookie_file, get_account, get_default_account, refresh_account_identity
+    account = get_account(record.get('account_id'), config) or get_default_account(config)
     cookie_path = resolve_cookie_file_path(
-        path_value=config.get('BILIBILI_COOKIES_PATH', 'cookies/bili_cookies.json'),
-        default_relative_path='cookies/bili_cookies.json',
-        service_name='Bilibili',
+        path_value=account.get("cookie_path") or config.get("BILIBILI_COOKIES_PATH", "cookies/bili_cookies.json"),
+        default_relative_path="cookies/bili_cookies.json",
+        service_name="Bilibili",
         logger_obj=logger,
-        allow_json_txt_fallback=False
+        allow_json_txt_fallback=False,
     )
+    if not cookie_path:
+        cookie_path = account_cookie_file(account, config)
 
     try:
         status_data = qr_session.check_status(cookie_file=cookie_path)
+        if status_data.get('status') == 'done' and status_data.get('cookies_saved'):
+            ok, message = refresh_account_identity(account.get('id'), config)
+            status_data['identity_updated'] = ok
+            if ok:
+                refreshed = get_account(account.get('id'), config) or account
+                status_data['uname'] = refreshed.get('uname') or ''
+                status_data['mid'] = refreshed.get('mid') or ''
+            else:
+                status_data['identity_message'] = message
         _emit_qr_login_event_once(
             _BILIBILI_QR_SESSIONS,
             _BILIBILI_QR_SESSION_LOCK,
@@ -3899,6 +3991,197 @@ def bilibili_qrcode_status(session_id):
     except Exception as e:
         logger.error(f"查询 bilibili 二维码登录状态失败: {e}")
         return jsonify({'success': False, 'message': '查询登录状态失败，请稍后重试'}), 500
+
+def _monitor_form_context(extra=None):
+    from modules.bilibili_accounts import get_default_account, list_accounts, public_account
+    from modules.upload_templates import build_default_profile, list_templates, public_template
+    config = load_config()
+    context = {
+        'upload_templates': [public_template(item) for item in list_templates()],
+        'bilibili_accounts': [public_account(item) for item in list_accounts(config)],
+        'default_upload_profile': build_default_profile(config, get_default_account(config).get('id') or ''),
+    }
+    if extra:
+        context.update(extra)
+    return context
+
+
+def _bilibili_accounts_payload(config):
+    from modules.bilibili_accounts import list_accounts, public_account
+    return [public_account(item) for item in list_accounts(config)]
+
+
+@app.route('/settings/bilibili/accounts', methods=['POST'])
+@login_required
+def bilibili_account_create():
+    """新建一个 bilibili 账号，Cookie 文件与其他账号分开。"""
+    config = load_config()
+    payload = request.get_json(silent=True) or request.form
+    name = str(payload.get('name') or '').strip() or '新账号'
+    from modules.bilibili_accounts import create_account
+    account = create_account(name, config)
+    from modules.bilibili_accounts import public_account
+    return jsonify({
+        'success': True,
+        'message': '已添加账号。请单独扫码或上传 Cookie，不会覆盖其他账号。',
+        'account': public_account(account),
+        'accounts': _bilibili_accounts_payload(config),
+    })
+
+
+@app.route('/settings/bilibili/accounts/<account_id>', methods=['POST'])
+@login_required
+def bilibili_account_update(account_id):
+    config = load_config()
+    payload = request.get_json(silent=True) or request.form
+    fields = {
+        'name': payload.get('name', ''),
+        'proxy_enabled': payload.get('proxy_enabled'),
+        'proxy_url': payload.get('proxy_url', ''),
+        'proxy_username': payload.get('proxy_username', ''),
+    }
+    if 'proxy_password' in payload:
+        fields['proxy_password'] = payload.get('proxy_password') or ''
+    from modules.bilibili_accounts import public_account, update_account
+    try:
+        account = update_account(account_id, fields, config)
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    if not account:
+        return jsonify({'success': False, 'message': '账号不存在'}), 404
+    return jsonify({
+        'success': True,
+        'message': '账号已保存',
+        'account': public_account(account),
+        'accounts': _bilibili_accounts_payload(config),
+    })
+
+
+@app.route('/settings/bilibili/accounts/<account_id>/default', methods=['POST'])
+@login_required
+def bilibili_account_make_default(account_id):
+    config = load_config()
+    from modules.bilibili_accounts import public_account, set_default_account
+    account = set_default_account(account_id, config)
+    if not account:
+        return jsonify({'success': False, 'message': '账号不存在'}), 404
+    return jsonify({
+        'success': True,
+        'message': f'已将「{account.get("name") or "账号"}」设为默认账号',
+        'account': public_account(account),
+        'accounts': _bilibili_accounts_payload(load_config()),
+    })
+
+
+@app.route('/settings/bilibili/accounts/<account_id>/delete', methods=['POST'])
+@login_required
+def bilibili_account_delete(account_id):
+    config = load_config()
+    from modules.bilibili_accounts import delete_account
+    ok, message = delete_account(account_id, config)
+    status = 200 if ok else 400
+    return jsonify({
+        'success': ok,
+        'message': message,
+        'accounts': _bilibili_accounts_payload(config),
+    }), status
+
+
+@app.route('/settings/bilibili/accounts/<account_id>/cookies', methods=['POST'])
+@login_required
+def bilibili_account_upload_cookies(account_id):
+    """只覆盖这一个账号的 Cookie 文件。"""
+    config = load_config()
+    from modules.bilibili_accounts import account_cookie_file, get_account, public_account, refresh_account_identity
+    account = get_account(account_id, config)
+    if not account:
+        return jsonify({'success': False, 'message': '账号不存在'}), 404
+    upload = request.files.get('cookies_file')
+    if not upload or not upload.filename:
+        return jsonify({'success': False, 'message': '请选择 Cookie 文件'}), 400
+    content = upload.read()
+    if not content or len(content) > 2 * 1024 * 1024:
+        return jsonify({'success': False, 'message': 'Cookie 文件为空或过大'}), 400
+    cookie_path = account_cookie_file(account, config)
+    directory = os.path.dirname(cookie_path)
+    os.makedirs(directory, exist_ok=True)
+    temporary = cookie_path + '.uploading'
+    try:
+        with open(temporary, 'wb') as handle:
+            handle.write(content)
+        os.replace(temporary, cookie_path)
+    except OSError:
+        logger.exception("保存 bilibili 账号 Cookie 文件失败")
+        return jsonify({'success': False, 'message': 'Cookie 文件保存失败'}), 500
+    from modules.task_manager import validate_cookies
+    valid, message = validate_cookies(cookie_path, 'Bilibili')
+    if not valid:
+        return jsonify({'success': False, 'message': f'Cookie 文件未通过校验: {message}'}), 400
+    ok, identity_message = refresh_account_identity(account_id, config)
+    refreshed = get_account(account_id, config) or account
+    return jsonify({
+        'success': True,
+        'message': 'Cookie 已写入该账号' + ('' if ok else '，昵称稍后再试'),
+        'identity_updated': ok,
+        'identity_message': identity_message,
+        'account': public_account(refreshed),
+        'accounts': _bilibili_accounts_payload(config),
+    })
+
+
+@app.route('/upload-templates', methods=['GET', 'POST'])
+@login_required
+def upload_templates_page():
+    from modules.bilibili_accounts import list_accounts, public_account
+    from modules.upload_templates import list_templates, public_template, save_template
+    config = load_config()
+    if request.method == 'POST':
+        payload = request.get_json(silent=True) or request.form
+        try:
+            record = save_template(payload, template_id=str(payload.get('id') or ''))
+        except Exception as exc:
+            logger.exception("保存投稿模板失败")
+            return jsonify({'success': False, 'message': '保存模板失败'}), 500
+        return jsonify({
+            'success': True,
+            'message': f'模板「{record.get("name")}」已保存',
+            'template': public_template(record),
+            'templates': [public_template(item) for item in list_templates()],
+        })
+    accounts = [public_account(item) for item in list_accounts(config)]
+    return render_template(
+        'upload_templates.html',
+        templates=[public_template(item) for item in list_templates()],
+        accounts=accounts,
+        config=config,
+    )
+
+
+@app.route('/upload-templates/preview', methods=['POST'])
+@login_required
+def upload_templates_preview():
+    from modules.upload_templates import preview_fields
+    payload = request.get_json(silent=True) or request.form
+    try:
+        preview = preview_fields(payload)
+    except Exception:
+        logger.exception("渲染投稿模板预览失败")
+        return jsonify({'success': False, 'message': '预览失败'}), 500
+    return jsonify({'success': True, **preview})
+
+
+@app.route('/upload-templates/<template_id>/delete', methods=['POST'])
+@login_required
+def upload_template_delete(template_id):
+    from modules.upload_templates import delete_template, list_templates, public_template
+    ok, message = delete_template(template_id)
+    status = 200 if ok else 400
+    return jsonify({
+        'success': ok,
+        'message': message,
+        'templates': [public_template(item) for item in list_templates()],
+    }), status
+
 
 @app.route('/settings/reset', methods=['POST'])
 @login_required
@@ -4410,13 +4693,14 @@ def youtube_monitor_config():
                 'rate_limit_requests': safe_int(request.form.get('rate_limit_requests'), 20),
                 'rate_limit_window': safe_int(request.form.get('rate_limit_window'), 60),
                 'auto_add_to_tasks': 'auto_add_to_tasks' in request.form,
-                'video_types': ','.join(request.form.getlist('video_types') or ['video','short','live'])
+                'video_types': ','.join(request.form.getlist('video_types') or ['video','short','live']),
+                'upload_template_id': (request.form.get('upload_template_id') or '').strip(),
             }
             
             # 验证必填项
             if not config_data['name']:
                 flash('配置名称不能为空', 'danger')
-                return render_template('youtube_monitor_config.html')
+                return render_template('youtube_monitor_config.html', **_monitor_form_context())
             
             config_id = youtube_monitor.create_monitor_config(config_data)
             flash(f'监控配置 "{config_data["name"]}" 创建成功！', 'success')
@@ -4425,7 +4709,7 @@ def youtube_monitor_config():
         except Exception as e:
             flash(f'创建监控配置失败: {str(e)}', 'danger')
     
-    return render_template('youtube_monitor_config.html')
+    return render_template('youtube_monitor_config.html', **_monitor_form_context())
 
 @app.route('/youtube_monitor/config/<int:config_id>/edit', methods=['GET', 'POST'])
 @login_required
@@ -4482,13 +4766,14 @@ def youtube_monitor_config_edit(config_id):
                 'rate_limit_requests': safe_int(request.form.get('rate_limit_requests'), 20),
                 'rate_limit_window': safe_int(request.form.get('rate_limit_window'), 60),
                 'auto_add_to_tasks': 'auto_add_to_tasks' in request.form,
-                'video_types': ','.join(request.form.getlist('video_types') or ['video','short','live'])
+                'video_types': ','.join(request.form.getlist('video_types') or ['video','short','live']),
+                'upload_template_id': (request.form.get('upload_template_id') or '').strip(),
             }
             
             # 验证必填项
             if not config_data['name']:
                 flash('配置名称不能为空', 'danger')
-                return render_template('youtube_monitor_config.html', config=config, is_edit=True)
+                return render_template('youtube_monitor_config.html', **_monitor_form_context({'config': config, 'is_edit': True}))
             
             youtube_monitor.update_monitor_config(config_id, config_data)
             flash(f'监控配置更新成功！', 'success')
@@ -4497,7 +4782,7 @@ def youtube_monitor_config_edit(config_id):
         except Exception as e:
             flash(f'更新监控配置失败: {str(e)}', 'danger')
     
-    return render_template('youtube_monitor_config.html', config=config, is_edit=True)
+    return render_template('youtube_monitor_config.html', **_monitor_form_context({'config': config, 'is_edit': True}))
 
 @app.route('/youtube_monitor/config/<int:config_id>/delete', methods=['POST'])
 @login_required
