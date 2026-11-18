@@ -2095,7 +2095,10 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
             if PIPELINE_STAGE_DOWNLOAD_VIDEO in completed_stages:
                 task_logger.info("跳过下载视频文件（checkpoint已完成）")
             else:
-                self._download_video_file(task_id, task['youtube_url'], task_logger)
+                download_outcome = self._download_video_file(task_id, task['youtube_url'], task_logger)
+                if download_outcome == 'held':
+                    task_logger.info("下载被闸门暂停，任务回到等待队列；已完成下载的编码和上传会继续")
+                    return
                 _raise_if_cancelled(task_id, task_logger)
                 task = get_task(task_id)
                 if task is not None and task['status'] == TASK_STATES['FAILED']:
@@ -2250,6 +2253,18 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
                 return
             
             # 按创建时间排序，启动最早的pending任务
+            from modules.pipeline.gates import downloads_blocked, task_needs_download
+            if downloads_blocked():
+                runnable = [task for task in pending_tasks if not task_needs_download(task)]
+                held = len(pending_tasks) - len(runnable)
+                if held and not runnable:
+                    logger.info(
+                        "下载闸门关闭，%s 个仍需下载的任务继续等待；编码和上传不受影响",
+                        held,
+                    )
+                    return
+                pending_tasks = runnable
+
             pending_tasks.sort(key=lambda x: x['created_at'])
             next_task = pending_tasks[0]
             
@@ -2327,9 +2342,30 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
             task_logger.error(f"视频信息采集失败: {result}")
             update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"采集信息失败: {result}")
 
+    def _hold_download(self, task_id, task_logger, message):
+        """下载闸门拦住任务时回到等待队列，不记成失败，也不标记下载阶段完成。"""
+        task_logger.info(message)
+        update_task(
+            task_id,
+            status=TASK_STATES['PENDING'],
+            error_message=message,
+            upload_progress=None,
+        )
+        return 'held'
+
     def _download_video_file(self, task_id, youtube_url, task_logger):
         """审核通过后下载视频文件"""
+        from modules.pipeline.gates import describe_download_block, disk_threshold_bytes, poll_disk
         from modules.youtube_handler import download_video_data
+
+        try:
+            poll_disk(DOWNLOADS_DIR, disk_threshold_bytes(self.config))
+        except Exception as exc:
+            task_logger.debug(f"下载前磁盘检查失败: {exc}")
+        blocked = describe_download_block()
+        if blocked:
+            return self._hold_download(task_id, task_logger, blocked)
+
         task_logger.info(f"审核通过，开始下载视频文件: {youtube_url}")
         update_task(task_id, status=TASK_STATES['DOWNLOADING'])
 
@@ -2391,6 +2427,11 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
         if is_task_cancelled(task_id):
             task_logger.info("下载完成前检测到任务取消请求")
             raise TaskCancelledError("任务已取消")
+        if not success:
+            from modules.pipeline.gates import describe_download_block
+            blocked = describe_download_block()
+            if blocked or (isinstance(result, str) and result.startswith(("下载已", "YouTube 下载已熔断", "磁盘剩余"))):
+                return self._hold_download(task_id, task_logger, blocked or str(result))
         if success:
             task_logger.info("视频文件下载成功")
             
@@ -2418,6 +2459,44 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
         else:
             task_logger.error(f"视频文件下载失败: {result}")
             update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"下载视频失败: {result}")
+            return 'failed'
+        return 'ok'
+
+    def _reclaim_posted_files(self, task_id, task_logger, *, last_platform: bool):
+        """最后一次投稿成功后，按清理开关或磁盘阈值删除该任务的本地文件。
+
+        只删除这一条任务目录。磁盘回到阈值以上时解除 disk-low，手动暂停和熔断不动。
+        """
+        from modules.pipeline.gates import (
+            disk_is_low,
+            disk_threshold_bytes,
+            maybe_release_disk_hold,
+        )
+
+        threshold = disk_threshold_bytes(self.config)
+        low = False
+        try:
+            low = disk_is_low(DOWNLOADS_DIR, threshold)
+        except Exception as exc:
+            task_logger.debug(f"检查磁盘阈值失败: {exc}")
+        should_delete = bool(last_platform) and (
+            bool(self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)) or low
+        )
+        if should_delete:
+            reason = "上传后清理已开启" if self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False) else "磁盘低于阈值"
+            try:
+                if delete_task_files(task_id):
+                    task_logger.info(f"{reason}，已删除本次投稿的本地文件: {task_id}")
+                else:
+                    task_logger.warning(f"本次投稿的本地文件删除失败，请手动清理: {task_id}")
+            except Exception as exc:
+                task_logger.warning(f"上传后删除本地文件失败（不影响已完成的投稿）: {exc}")
+        try:
+            if maybe_release_disk_hold(DOWNLOADS_DIR, threshold):
+                task_logger.info("磁盘空间已回到阈值以上，自动恢复下载")
+                kick_pending_downloads_if_running()
+        except Exception as exc:
+            task_logger.debug(f"解除磁盘暂停失败: {exc}")
 
     def _recover_cover_path(self, task_id, cover_path, task_logger):
         """尝试恢复缺失的封面文件路径。
@@ -4584,7 +4663,8 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
                 return
             
             # 下载视频文件
-            self._download_video_file(task_id, youtube_url, task_logger)
+            if self._download_video_file(task_id, youtube_url, task_logger) == 'held':
+                return
             
             # 重新获取任务信息
             task = get_task(task_id)
@@ -4758,20 +4838,12 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
                     status=TASK_STATES['COMPLETED'],
                     acfun_upload_response=json.dumps(result, ensure_ascii=False)
                 )
-                # 单平台(AcFun)上传成功后立即删除本地文件，腾出磁盘空间，
-                # 避免大视频长期占用磁盘导致后续任务因 No space left on device 失败。
-                # 双平台(both)场景由 B 站上传分支（最后平台）统一删除，这里不重复删。
-                try:
-                    if (
-                        self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)
-                        and _get_task_upload_target(task) == UPLOAD_TARGET_ACFUN
-                    ):
-                        if delete_task_files(task_id):
-                            task_logger.info(f"AcFun 上传完成，已删除本地文件释放空间: {task_id}")
-                        else:
-                            task_logger.warning(f"AcFun 上传完成，但本地文件删除失败，请手动清理: {task_id}")
-                except Exception as _e:
-                    task_logger.warning(f"上传后删除本地文件失败（不影响已完成的 AcFun 上传）: {_e}")
+                # 单平台 AcFun 才是最后一站。双平台时等 B 站成功后再删，避免把还要投稿的文件清掉。
+                self._reclaim_posted_files(
+                    task_id,
+                    task_logger,
+                    last_platform=_get_task_upload_target(task) == UPLOAD_TARGET_ACFUN,
+                )
             else:
                 task_logger.error(f"视频上传失败: {result}")
                 update_task(
@@ -4826,7 +4898,8 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
                 )
                 return
 
-            self._download_video_file(task_id, youtube_url, task_logger)
+            if self._download_video_file(task_id, youtube_url, task_logger) == 'held':
+                return
             task = get_task(task_id)
             video_path = task.get('video_path_local', '') if task else ''
             cover_path = task.get('cover_path_local', '') if task else ''
@@ -4978,6 +5051,7 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
             uploader = BilibiliUploader(
                 cookie_file=bilibili_cookies_path,
                 submit_api=self.config.get('BILIBILI_SUBMIT_API', 'auto'),
+                upload_line=self.config.get('BILIBILI_UPLOAD_LINE', 'auto'),
             )
             last_progress_text = '0.0%'
 
@@ -5032,23 +5106,12 @@ class TaskProcessor(SubtitleLayoutMixin, MediaEmbedMixin):
                     bilibili_upload_response=json.dumps(result, ensure_ascii=False),
                     upload_progress=None
                 )
-                # 上传到 B 站成功后立即删除本地文件，腾出磁盘空间，
-                # 避免大视频（如 CS2 比赛直播流，单条可达十余 GB）长期占用磁盘，
-                # 导致后续任务因「No space left on device」而失败。
-                # - bilibili 单平台：此处即为最后平台，直接删除；
-                # - both 双平台：AcFun 已先上传完成，B 站为最后平台，同样删除；
-                # - acfun 单平台：不会进入本分支，由 AcFun 分支处理。
-                try:
-                    if (
-                        self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)
-                        and _get_task_upload_target(task) != UPLOAD_TARGET_ACFUN
-                    ):
-                        if delete_task_files(task_id):
-                            task_logger.info(f"bilibili 上传完成，已删除本地文件释放空间: {task_id}")
-                        else:
-                            task_logger.warning(f"bilibili 上传完成，但本地文件删除失败，请手动清理: {task_id}")
-                except Exception as _e:
-                    task_logger.warning(f"上传后删除本地文件失败（不影响已完成的 B 站上传）: {_e}")
+                # B 站是单平台的最后一站，也是双平台流程里的最后一站。
+                self._reclaim_posted_files(
+                    task_id,
+                    task_logger,
+                    last_platform=_get_task_upload_target(task) != UPLOAD_TARGET_ACFUN,
+                )
             else:
                 task_logger.error(f"bilibili上传失败: {result}")
                 update_task(
@@ -5180,6 +5243,17 @@ def force_upload_task(task_id, config=None):
 
 # 全局任务处理器实例
 _global_task_processor = None
+
+def kick_pending_downloads_if_running():
+    """闸门打开后立刻看一眼等待队列。处理器还没起来时什么都不做。"""
+    proc = _global_task_processor
+    if proc is None:
+        return
+    try:
+        proc._check_and_start_next_pending_task()
+    except Exception as exc:
+        logger.warning(f"恢复下载后调度等待任务失败: {exc}")
+
 
 def get_global_task_processor(config=None):
     """

@@ -32,6 +32,9 @@
         </div>
     </div>
 
+    {% set next_page = 'tasks' %}
+    {% include 'partials/runtime_gates_banner.html' %}
+
     <div id="tasksContent">
     {% if tasks %}
     <div class="modern-list">

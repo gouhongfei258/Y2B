@@ -24,8 +24,10 @@ class DeleteDownloadsAfterUploadConfigTests(unittest.TestCase):
         option_guard = "self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)"
 
         self.assertEqual(source.count(option_guard), 2)
-        self.assertIn('and _get_task_upload_target(task) == UPLOAD_TARGET_ACFUN', source)
-        self.assertIn('and _get_task_upload_target(task) != UPLOAD_TARGET_ACFUN', source)
+        self.assertIn('last_platform=_get_task_upload_target(task) == UPLOAD_TARGET_ACFUN', source)
+        self.assertIn('last_platform=_get_task_upload_target(task) != UPLOAD_TARGET_ACFUN', source)
+        # 开关关闭时不删；磁盘低于阈值时只删刚投稿成功的那一条，好让下载恢复。
+        self.assertIn('or low', source)
 
 
 if __name__ == '__main__':

@@ -841,6 +841,8 @@ SETTINGS_INT_FIELDS = list(dict.fromkeys([
     'MAX_CONCURRENT_TASKS', 'MAX_CONCURRENT_UPLOADS',
     'LOG_CLEANUP_HOURS', 'LOG_CLEANUP_INTERVAL',
     'DOWNLOAD_CLEANUP_HOURS', 'DOWNLOAD_CLEANUP_INTERVAL',
+    'BILIBILI_PREUPLOAD_COOLDOWN_MINUTES', 'BILIBILI_SUBMIT_COOLDOWN_MINUTES',
+    'DOWNLOAD_DISK_FREE_THRESHOLD_GB',
     'SUBTITLE_BATCH_SIZE', 'SUBTITLE_MAX_RETRIES',
     'SUBTITLE_RETRY_DELAY', 'SUBTITLE_MAX_WORKERS', 'YOUTUBE_DOWNLOAD_THREADS',
     'YOUTUBE_DOWNLOAD_MAX_HEIGHT',
@@ -919,6 +921,9 @@ SETTINGS_RANGE_GUARDS = (
     ('SUBTITLE_BACKGROUND_OPACITY', 0.0, 1.0),
     # 编码质量（manual 模式下的 CRF/CQ/QP）
     ('VIDEO_QUALITY_VALUE', 0.0, 51.0),
+    ('BILIBILI_PREUPLOAD_COOLDOWN_MINUTES', 1.0, 1440.0),
+    ('BILIBILI_SUBMIT_COOLDOWN_MINUTES', 1.0, 1440.0),
+    ('DOWNLOAD_DISK_FREE_THRESHOLD_GB', 1.0, 10240.0),
 )
 
 # 回退提示里的中文名称（取自设置页控件文案），仅用于让用户看懂被改了哪一项。
@@ -952,6 +957,9 @@ SETTINGS_GUARD_LABELS = {
     'SUBTITLE_BACKGROUND_OPACITY': '字幕背景不透明度',
     # 编码质量
     'VIDEO_QUALITY_VALUE': '画质数值（CRF/CQ/QP）',
+    'BILIBILI_PREUPLOAD_COOLDOWN_MINUTES': 'Bilibili 406 冷却（分钟）',
+    'BILIBILI_SUBMIT_COOLDOWN_MINUTES': 'Bilibili 137022 冷却（分钟）',
+    'DOWNLOAD_DISK_FREE_THRESHOLD_GB': '下载磁盘阈值（GB）',
 }
 
 
@@ -1017,6 +1025,9 @@ def _format_settings_revert_message(reverts: list) -> str:
 def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | None = None) -> dict:
     form_data = dict(form_data or {})
     uploads = uploads or {}
+    # 粘贴内容不进配置文件，也不进日志。
+    cookie_paste = form_data.pop('YOUTUBE_COOKIES_PASTE', None)
+    cookie_paste = str(cookie_paste or '').strip()
     messages = []
     progress_reporter = _build_settings_progress_reporter(operation_id)
 
@@ -1283,6 +1294,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
             ('VIDEO_QUALITY_MODE', ('auto', 'manual')),
             ('VIDEO_HW_QUALITY_LEVEL', ('fast', 'balanced', 'quality')),
             ('VIDEO_COLOR_METADATA_MODE', ('auto', 'bt709', 'off')),
+            ('BILIBILI_UPLOAD_LINE', ('auto', 'bda2', 'bldsa', 'qn', 'ws', 'txa', 'alia')),
         )
         for _enum_key, _enum_allowed in _enum_guards:
             if _enum_key not in form_data:
@@ -1322,6 +1334,19 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
 
         _persist_settings_uploads(form_data, uploads)
         updated_config = update_config(form_data)
+        if cookie_paste:
+            try:
+                from modules.cookiecloud import resolve_cookie_output_path
+                from modules.youtube_handler import import_pasted_youtube_cookies
+                cookie_path = resolve_cookie_output_path(
+                    updated_config.get('YOUTUBE_COOKIES_PATH')
+                )
+                imported = import_pasted_youtube_cookies(cookie_paste, cookie_path)
+                level = 'success' if imported.get('authenticated') else ('warning' if imported.get('ok') else 'danger')
+                _append_settings_message(messages, level, imported.get('message') or 'YouTube Cookies 未更新。')
+            except Exception:
+                logger.warning("写入粘贴的 YouTube Cookies 失败")
+                _append_settings_message(messages, 'danger', '写入粘贴的 YouTube Cookies 失败，文件未改动。')
 
         try:
             from modules.task_manager import get_global_task_processor
@@ -2167,7 +2192,12 @@ def index():
         }
         recent_tasks = []
 
-    return render_template('index.html', stats=stats, recent_tasks=recent_tasks)
+    return render_template(
+        'index.html',
+        stats=stats,
+        recent_tasks=recent_tasks,
+        runtime_gates=_runtime_gate_status(),
+    )
 
 @app.route('/tasks')
 @login_required
@@ -2186,7 +2216,87 @@ def tasks():
     return render_template('tasks.html', 
                          tasks=pagination_data['tasks'],
                          pagination=pagination_data,
-                         config=config)
+                         config=config,
+                         runtime_gates=_runtime_gate_status())
+
+
+def _runtime_gate_status() -> dict:
+    try:
+        from modules.pipeline.gates import public_status
+        return public_status()
+    except Exception:
+        logger.warning("读取运行时闸门状态失败", exc_info=True)
+        return {
+            'manual_pause': False,
+            'downloads_blocked': False,
+            'block_reasons': [],
+            'download_message': '',
+            'bot': {'active': False, 'retries': 0, 'reason': ''},
+            'disk': {'hold': False},
+            'bili_406': {'active': False},
+            'bili_137022': {'active': False},
+        }
+
+
+def _gate_redirect():
+    target = str(request.form.get('next') or '').strip()
+    if target == 'tasks':
+        return redirect(url_for('tasks'))
+    return redirect(url_for('index'))
+
+
+@app.route('/downloads/pause', methods=['POST'])
+@login_required
+def pause_downloads_route():
+    from modules.pipeline.gates import pause_downloads
+    pause_downloads()
+    flash('已暂停下载。正在编码或上传的任务会继续，手动暂停不会自动恢复。', 'info')
+    return _gate_redirect()
+
+
+@app.route('/downloads/resume', methods=['POST'])
+@login_required
+def resume_downloads_route():
+    from modules.pipeline.gates import public_status, resume_downloads
+    from modules.task_manager import kick_pending_downloads_if_running
+    resume_downloads()
+    status = public_status()
+    if status.get('downloads_blocked'):
+        flash('已取消手动暂停。下载仍被其他闸门拦住：' + (status.get('download_message') or ''), 'warning')
+    else:
+        kick_pending_downloads_if_running()
+        flash('已恢复下载。', 'success')
+    return _gate_redirect()
+
+
+@app.route('/downloads/bot/resume', methods=['POST'])
+@login_required
+def bot_circuit_resume_route():
+    from modules.pipeline.gates import public_status, skip_bot_wait
+    from modules.task_manager import kick_pending_downloads_if_running
+    skip_bot_wait()
+    status = public_status()
+    if status.get('downloads_blocked'):
+        flash('已跳过本次熔断等待。下载仍被其他闸门拦住：' + (status.get('download_message') or ''), 'warning')
+    else:
+        kick_pending_downloads_if_running()
+        flash('已跳过本次熔断等待，将立即试探一次下载。退避次数仍保留。', 'success')
+    return _gate_redirect()
+
+
+@app.route('/downloads/bot/reset', methods=['POST'])
+@login_required
+def bot_circuit_reset_route():
+    from modules.pipeline.gates import public_status, reset_bot_circuit
+    from modules.task_manager import kick_pending_downloads_if_running
+    reset_bot_circuit()
+    status = public_status()
+    if status.get('downloads_blocked'):
+        flash('已重置 YouTube 熔断计数。下载仍被其他闸门拦住：' + (status.get('download_message') or ''), 'warning')
+    else:
+        kick_pending_downloads_if_running()
+        flash('已重置 YouTube 熔断，退避次数已清零。', 'success')
+    return _gate_redirect()
 
 
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:
@@ -3873,6 +3983,18 @@ def clear_specific_logs():
         return {'success': False, 'error': str(e)}
 
 
+def _release_disk_hold_after_cleanup(downloads_dir: str) -> None:
+    try:
+        from modules.pipeline.gates import disk_threshold_bytes, maybe_release_disk_hold
+        from modules.task_manager import kick_pending_downloads_if_running
+        config = load_config()
+        if maybe_release_disk_hold(downloads_dir, disk_threshold_bytes(config)):
+            logger.info("清理后磁盘已回到阈值以上，自动恢复下载")
+            kick_pending_downloads_if_running()
+    except Exception:
+        logger.warning("清理后检查磁盘闸门失败", exc_info=True)
+
+
 def cleanup_downloads(hours: int):
     """清理下载目录中指定hours之前的任务目录"""
     try:
@@ -3935,6 +4057,7 @@ def cleanup_downloads(hours: int):
             except Exception:
                 continue
 
+        _release_disk_hold_after_cleanup(downloads_dir)
         return {'success': True, 'dirs_removed': dirs_removed, 'files_removed': files_removed, 'bytes_freed': bytes_freed, 'bytes_freed_readable': _human_readable_size(bytes_freed)}
     except Exception as e:
         logger.warning(f"下载内容清理失败: {e}")
