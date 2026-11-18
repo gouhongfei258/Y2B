@@ -62,6 +62,8 @@ def _default_state() -> dict:
         },
         "bili_406": {"until": 0.0, "reason": "", "tripped_at": 0.0},
         "bili_137022": {"until": 0.0, "reason": "", "tripped_at": 0.0},
+        # 按账号分开的 406 / 137022 / 603。不带账号的旧计时器仍留在上面两个键里。
+        "bili_accounts": {},
         "submit_reuse": {},
     }
 
@@ -101,6 +103,27 @@ def _merge_state(raw: Any) -> dict:
         incoming = raw.get(key)
         if isinstance(incoming, dict):
             state[key].update(incoming)
+    accounts = raw.get("bili_accounts")
+    if isinstance(accounts, dict):
+        cleaned = {}
+        for account_id, bucket in accounts.items():
+            if not isinstance(account_id, str) or not account_id or not isinstance(bucket, dict):
+                continue
+            cleaned[account_id] = {
+                "name": str(bucket.get("name") or account_id),
+                "406": _blank_cooldown_slot(),
+                "137022": _blank_cooldown_slot(),
+                "603": _blank_cooldown_slot(),
+            }
+            for code in ("406", "137022", "603"):
+                incoming_slot = bucket.get(code)
+                if isinstance(incoming_slot, dict):
+                    cleaned[account_id][code].update(incoming_slot)
+                    try:
+                        cleaned[account_id][code]["until"] = float(incoming_slot.get("until") or 0)
+                    except (TypeError, ValueError):
+                        cleaned[account_id][code]["until"] = 0.0
+        state["bili_accounts"] = cleaned
     reuse = raw.get("submit_reuse")
     if isinstance(reuse, dict):
         state["submit_reuse"] = {
@@ -440,14 +463,62 @@ def _arm_slot(slot_name: str, minutes: int, reason: str) -> tuple[float, bool]:
         return float(duration), True
 
 
-def arm_bilibili_406(minutes: int) -> tuple[float, bool]:
+def _blank_cooldown_slot() -> dict:
+    return {"until": 0.0, "reason": "", "tripped_at": 0.0}
+
+
+def _arm_account_code(account_id: str, code: str, minutes: int, reason: str, account_name: str = "") -> tuple[float, bool]:
+    """只给这一个账号计时。窗口还没结束时不把到期时间往后推。"""
+    with _LOCK:
+        state = _load_unlocked()
+        accounts = state.setdefault("bili_accounts", {})
+        bucket = accounts.get(account_id)
+        if not isinstance(bucket, dict):
+            bucket = {
+                "name": account_name or account_id,
+                "406": _blank_cooldown_slot(),
+                "137022": _blank_cooldown_slot(),
+                "603": _blank_cooldown_slot(),
+            }
+            accounts[account_id] = bucket
+        if account_name:
+            bucket["name"] = account_name
+        slot = bucket.get(code)
+        if not isinstance(slot, dict):
+            slot = _blank_cooldown_slot()
+            bucket[code] = slot
+        now = _now()
+        remaining = _slot_remaining(slot, now)
+        if remaining > 0:
+            return remaining, False
+        duration = max(1, int(minutes)) * 60
+        slot["until"] = now + duration
+        slot["reason"] = reason
+        slot["tripped_at"] = now
+        _save_unlocked(state)
+        return float(duration), True
+
+
+def arm_bilibili_406(minutes: int, account_id: Optional[str] = None, account_name: str = "") -> tuple[float, bool]:
     normalized = normalize_preupload_cooldown_minutes(minutes)
+    if account_id:
+        return _arm_account_code(str(account_id), "406", normalized, "HTTP 406 preupload 风控", account_name)
     return _arm_slot("bili_406", normalized, "HTTP 406 preupload 风控")
 
 
-def arm_bilibili_137022(minutes: int) -> tuple[float, bool]:
+def arm_bilibili_137022(minutes: int, account_id: Optional[str] = None, account_name: str = "") -> tuple[float, bool]:
     normalized = normalize_bilibili_submit_cooldown_minutes(minutes)
+    if account_id:
+        return _arm_account_code(str(account_id), "137022", normalized, "code 137022 投稿频率限制", account_name)
     return _arm_slot("bili_137022", normalized, "code 137022 投稿频率限制")
+
+
+def arm_bilibili_603(minutes: int, account_id: Optional[str] = None, account_name: str = "") -> tuple[float, bool]:
+    from modules.config_manager import normalize_bounded_int
+    normalized = normalize_bounded_int(minutes, 30, 1, 1440)
+    if not account_id:
+        account_id = "default"
+    return _arm_account_code(str(account_id), "603", normalized, "code 603 账号风控", account_name)
 
 
 def save_submit_reuse(task_id: str, payload: dict) -> None:
@@ -529,9 +600,61 @@ def bilibili_137022_block(state: Optional[dict] = None) -> Optional[dict]:
     }
 
 
-def bilibili_local_block_message(state: Optional[dict] = None) -> str:
-    """冷却期内的本地失败文案。调用方不得据此去请求 Bilibili，也不得刷新到期时间。"""
+def account_cooldown_entries(account_id: str, now: Optional[float] = None, state: Optional[dict] = None) -> list:
+    """某个账号当前还在生效的冷却。now 用于测试注入时间。"""
     current = state if state is not None else read_state()
+    bucket = (current.get("bili_accounts") or {}).get(str(account_id or "")) or {}
+    labels = {
+        "406": "preupload 406",
+        "137022": "投稿 137022",
+        "603": "风控 603",
+    }
+    active = []
+    for code, label in labels.items():
+        slot = bucket.get(code) or {}
+        remaining = _slot_remaining(slot, now)
+        if remaining <= 0:
+            continue
+        try:
+            until = float(slot.get("until") or 0)
+        except (TypeError, ValueError):
+            until = 0.0
+        active.append({
+            "code": int(code),
+            "until": until,
+            "remaining_seconds": int(remaining),
+            "label": label,
+        })
+    active.sort(key=lambda item: item["remaining_seconds"], reverse=True)
+    return active
+
+
+def bilibili_local_block_message(
+    state: Optional[dict] = None,
+    account_id: Optional[str] = None,
+    account_name: str = "",
+) -> str:
+    """冷却期内的本地失败文案。调用方不得据此去请求 Bilibili，也不得刷新到期时间。
+
+    传入 account_id 时只看这个账号，其他账号的冷却不会挡住它。
+    """
+    current = state if state is not None else read_state()
+    if account_id:
+        active = account_cooldown_entries(str(account_id), state=current)
+        if not active:
+            return ""
+        longest = active[0]
+        labels = "、".join(item["label"] for item in active)
+        name = account_name or ((current.get("bili_accounts") or {}).get(str(account_id)) or {}).get("name") or str(account_id)
+        if longest["code"] == 137022 and len(active) == 1:
+            tail = "本次未请求投稿接口，到期时间未刷新。"
+        else:
+            tail = "本次未请求 Bilibili，到期时间未刷新。"
+        return (
+            f"bilibili 账号「{name}」正在冷却（{labels}），"
+            f"剩余 {format_remaining(longest['remaining_seconds'])}。"
+            f"{tail}其他账号不受影响。"
+        )
     preupload = bilibili_406_block(current)
     if preupload:
         return (
@@ -563,6 +686,11 @@ def configured_137022_minutes(config: Optional[dict]) -> int:
     return normalize_bilibili_submit_cooldown_minutes(
         (config or {}).get("BILIBILI_SUBMIT_COOLDOWN_MINUTES")
     )
+
+
+def configured_603_minutes(config: Optional[dict]) -> int:
+    from modules.config_manager import normalize_bounded_int
+    return normalize_bounded_int((config or {}).get("BILIBILI_RISK_COOLDOWN_MINUTES"), 30, 1, 1440)
 
 
 def public_status() -> dict:
@@ -610,4 +738,32 @@ def public_status() -> dict:
             "remaining_display": format_remaining(submit["remaining"]) if submit else "",
             "until_display": format_timestamp((state.get("bili_137022") or {}).get("until")) if submit else "",
         },
+        "bili_account_cooldowns": _public_account_cooldowns(state, now),
     }
+
+
+def _public_account_cooldowns(state: dict, now: float) -> list:
+    notices = []
+    labels = {
+        "406": "HTTP 406 / preupload",
+        "137022": "code 137022",
+        "603": "code 603",
+    }
+    for account_id, bucket in (state.get("bili_accounts") or {}).items():
+        if not isinstance(bucket, dict):
+            continue
+        name = str(bucket.get("name") or account_id)
+        for code, label in labels.items():
+            slot = bucket.get(code) or {}
+            remaining = _slot_remaining(slot, now)
+            if remaining <= 0:
+                continue
+            notices.append({
+                "account_id": account_id,
+                "name": name,
+                "code": code,
+                "label": label,
+                "remaining_display": format_remaining(remaining),
+                "until_display": format_timestamp(slot.get("until")),
+            })
+    return notices

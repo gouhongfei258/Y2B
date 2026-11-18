@@ -663,9 +663,47 @@ def _normalize_task_text(value) -> str:
     return str(value or '').strip()
 
 
+def _apply_fixed_profile_partitions(task_id, task, profile, task_logger):
+    """固定分区模板不调用 AI，直接把分区写到任务上。"""
+    updates = {}
+    upload_target = _get_task_upload_target(task)
+    for platform in _get_upload_platforms_for_target(upload_target):
+        selected_field = _get_partition_field_name(platform, 'selected')
+        recommended_field = _get_partition_field_name(platform, 'recommended')
+        key = (
+            'fixed_partition_bilibili'
+            if platform == UPLOAD_TARGET_BILIBILI
+            else 'fixed_partition_acfun'
+        )
+        value = str((profile or {}).get(key) or '').strip()
+        if not value:
+            continue
+        if not str((task or {}).get(selected_field) or '').strip():
+            updates[selected_field] = value
+        if not str((task or {}).get(recommended_field) or '').strip():
+            updates[recommended_field] = value
+    if updates:
+        update_task(task_id, **updates)
+        task_logger.info("已按模板写入固定分区")
+
+
+def _profile_needs_partition_stage(runtime_config) -> bool:
+    """固定分区或低置信度回退不走全局「推荐分区」开关，但入队快照仍要执行。"""
+    profile = (runtime_config or {}).get("_UPLOAD_PROFILE") or {}
+    strategy = str(profile.get("partition_strategy") or "")
+    if strategy not in ("ai", "fixed", "ai_fallback"):
+        return False
+    return not bool((runtime_config or {}).get("RECOMMEND_PARTITION"))
+
+
 def _get_missing_required_translation_fields(task, config) -> list:
     if not task:
         return []
+    try:
+        from modules.upload_templates import settings_for_task
+        config = settings_for_task(config, task)
+    except Exception:
+        config = config or {}
 
     missing_fields = []
     if _as_bool(config.get('TRANSLATE_TITLE', True)) and _normalize_task_text(task.get('video_title_original')):
@@ -1404,6 +1442,11 @@ def is_metadata_translation_retryable(task):
 def get_metadata_translation_retry_block_reason(task, config) -> str | None:
     """返回当前配置下不能重新翻译的原因；可重试时返回 None。"""
     config = config or {}
+    try:
+        from modules.upload_templates import settings_for_task
+        config = settings_for_task(config, task)
+    except Exception:
+        pass
     can_translate_title = (
         _as_bool(config.get('TRANSLATE_TITLE', True))
         and bool(_normalize_task_text(task.get('video_title_original')))
@@ -2039,7 +2082,9 @@ class TaskProcessor(
                 completed_stages = _mark_stage_done(task_id, completed_stages, PIPELINE_STAGE_FETCH_INFO)
 
             # 2. 翻译/标签/分区推荐（如有需要）
-            if self.config.get('TRANSLATE_TITLE', True) or self.config.get('TRANSLATE_DESCRIPTION', True):
+            from modules.upload_templates import settings_for_task
+            runtime_config = settings_for_task(self.config, task)
+            if runtime_config.get('TRANSLATE_TITLE', True) or runtime_config.get('TRANSLATE_DESCRIPTION', True):
                 if PIPELINE_STAGE_TRANSLATE_CONTENT in completed_stages:
                     task_logger.info("跳过标题/描述翻译（checkpoint已完成）")
                 else:
@@ -2059,6 +2104,10 @@ class TaskProcessor(
             # 该阶段负责把预设标签落到任务上（任务卡展示、分区推荐上下文、checkpoint
             # 与上传路径口径一致），此时函数内部不会调用标签 AI。
             if self.config.get('GENERATE_TAGS', True) or is_preset_tags_effective(self.config):
+                _run_tag_stage = True
+            else:
+                _run_tag_stage = is_preset_tags_effective(runtime_config)
+            if _run_tag_stage:
                 if PIPELINE_STAGE_GENERATE_TAGS in completed_stages:
                     task_logger.info("跳过标签生成（checkpoint已完成）")
                 else:
@@ -2067,7 +2116,7 @@ class TaskProcessor(
                         completed_stages = _mark_stage_done(task_id, completed_stages, PIPELINE_STAGE_GENERATE_TAGS)
                 _raise_if_cancelled(task_id, task_logger)
 
-            if self.config.get('RECOMMEND_PARTITION', False):
+            if runtime_config.get('RECOMMEND_PARTITION', False) or _profile_needs_partition_stage(runtime_config):
                 if PIPELINE_STAGE_RECOMMEND_PARTITION in completed_stages:
                     task_logger.info("跳过分区推荐（checkpoint已完成）")
                 else:
@@ -2589,6 +2638,8 @@ class TaskProcessor(
         
         task_logger.info("开始生成视频标签")
         update_task(task_id, status=TASK_STATES['TAGGING'])
+        from modules.upload_templates import settings_for_task
+        tag_config = settings_for_task(self.config, task)
         
         # 优先使用翻译后的元数据，避免将原始导流文本继续送给标签模型
         from modules.utils import safe_str
@@ -2613,8 +2664,8 @@ class TaskProcessor(
         
         # 预设标签（Issue #139）：启用且非空时，预设排在任务已有标签之前，
         # AI 只补齐剩余名额（落盘上限取 bilibili 的 12，AcFun 上传时再截到 6）。
-        preset_tags = parse_preset_tags(self.config.get('PRESET_TAGS', ''))
-        preset_effective = is_preset_tags_effective(self.config)
+        preset_tags = parse_preset_tags(tag_config.get('PRESET_TAGS', ''))
+        preset_effective = is_preset_tags_effective(tag_config)
 
         if not preset_effective:
             # 预设未生效：完全保留既有行为（AI 6 标签 / 失败或禁用写空列表）
@@ -2683,6 +2734,9 @@ class TaskProcessor(
 
         task_logger.info("开始推荐视频分区")
         update_task(task_id, status=TASK_STATES['PARTITIONING'])
+        from modules.upload_templates import settings_for_task
+        partition_config = settings_for_task(self.config, task)
+        partition_profile = partition_config.get("_UPLOAD_PROFILE") or {}
 
         title = task.get('video_title_translated', '') or task.get('video_title_original', '')
         description = task.get('description_translated', '') or task.get('description_original', '')
@@ -2707,19 +2761,22 @@ class TaskProcessor(
             'FALLBACK_OPENAI_API_KEY': self.config.get('FALLBACK_OPENAI_API_KEY', ''),
             'FALLBACK_OPENAI_BASE_URL': self.config.get('FALLBACK_OPENAI_BASE_URL', ''),
             'FALLBACK_OPENAI_MODEL_NAME': self.config.get('FALLBACK_OPENAI_MODEL_NAME', ''),
-            'FIXED_PARTITION_ID': self.config.get('FIXED_PARTITION_ID', ''),
-            'FIXED_PARTITION_ID_BILIBILI': self.config.get('FIXED_PARTITION_ID_BILIBILI', ''),
+            'FIXED_PARTITION_ID': partition_config.get('FIXED_PARTITION_ID', ''),
+            'FIXED_PARTITION_ID_BILIBILI': partition_config.get('FIXED_PARTITION_ID_BILIBILI', ''),
             'RECOMMEND_PARTITION_WITH_COVER': self.config.get('RECOMMEND_PARTITION_WITH_COVER', False),
         }
         cover_path = task.get('cover_path_local', '')
 
-        task_logger.info(f"RECOMMEND_PARTITION设置: {self.config.get('RECOMMEND_PARTITION', False)}")
+        task_logger.info(f"RECOMMEND_PARTITION设置: {partition_config.get('RECOMMEND_PARTITION', False)}")
         from modules.utils import safe_str
         task_logger.info(f"标题长度: {len(safe_str(title))}, 描述长度: {len(safe_str(description))}")
         task_logger.info(f"任务目标平台: {upload_target}")
 
-        if not self.config.get('RECOMMEND_PARTITION', False):
-            task_logger.info("分区推荐功能已禁用，跳过推荐")
+        if not partition_config.get('RECOMMEND_PARTITION', False):
+            if str(partition_profile.get("partition_strategy") or "") == "fixed":
+                _apply_fixed_profile_partitions(task_id, task, partition_profile, task_logger)
+            else:
+                task_logger.info("分区推荐功能已禁用，跳过推荐")
             return True
 
         if not (title or description):
@@ -2842,6 +2899,22 @@ class TaskProcessor(
                     content_profile.get('reason_summary'),
                     content_profile.get('entities'),
                 )
+            if str(partition_profile.get("partition_strategy") or "") == "ai_fallback":
+                low_confidence = bool(partition_selection.get("low_confidence")) or not recommended_partition_id
+                fallback_key = (
+                    "fallback_partition_bilibili"
+                    if platform == UPLOAD_TARGET_BILIBILI
+                    else "fallback_partition_acfun"
+                )
+                fallback_id = str(partition_profile.get(fallback_key) or "").strip()
+                if low_confidence and fallback_id:
+                    task_logger.info(
+                        "%s 分区推荐置信度不足，改用模板固定分区 %s",
+                        platform,
+                        fallback_id,
+                    )
+                    recommended_partition_id = fallback_id
+
             if recommended_partition_id:
                 selected_field = _get_partition_field_name(platform, 'selected')
                 recommended_field = _get_partition_field_name(platform, 'recommended')

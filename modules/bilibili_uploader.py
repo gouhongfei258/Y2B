@@ -142,18 +142,23 @@ def format_bilibili_description(
     original_upload_date: str = "",
     append_repost_notice: bool = True,
     max_len: int = BILIBILI_DESCRIPTION_LIMIT,
+    repost_notice_text: str = "",
 ) -> str:
     summary = _remove_redundant_original_url(base_desc, original_url)
     is_repost = bool(original_url or original_uploader or original_upload_date)
     if not is_repost or not append_repost_notice:
         return _truncate_multiline_text(summary, max_len)
 
-    notice_parts = ["本视频转载自YouTube"]
-    if original_upload_date:
-        notice_parts.append(f"原始上传时间：{original_upload_date}")
-    if original_uploader:
-        notice_parts.append(f"UP主：{original_uploader}")
-    repost_notice = "，".join(notice_parts)
+    custom_notice = _normalize_multiline_text(repost_notice_text)
+    if custom_notice:
+        repost_notice = custom_notice
+    else:
+        notice_parts = ["本视频转载自YouTube"]
+        if original_upload_date:
+            notice_parts.append(f"原始上传时间：{original_upload_date}")
+        if original_uploader:
+            notice_parts.append(f"UP主：{original_uploader}")
+        repost_notice = "，".join(notice_parts)
 
     if not summary:
         return _truncate_multiline_text(repost_notice, max_len)
@@ -249,6 +254,16 @@ def _submit_api_short_labels(attempts: Optional[Sequence[dict]]) -> List[str]:
     return labels
 
 
+def _redact_proxy_credentials(text: str) -> str:
+    """日志里不保留带账号密码的代理地址。"""
+    return re.sub(
+        r"((?:https?|socks5h?|socks4)://)([^/\s:@]+):([^/\s@]+)@",
+        r"\1***:***@",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    )
+
+
 def _bilibili_603_hint(submit_attempts: Optional[Sequence[dict]] = None) -> str:
     labels = _submit_api_short_labels(submit_attempts)
     if len(labels) > 1:
@@ -301,18 +316,60 @@ class _BilibiliChunkProgress:
 class BilibiliUploader:
     """Bilibili uploader based on the internal SDK subset."""
 
-    def __init__(self, cookie_file: str, submit_api: str = "auto", upload_line: str = "auto"):
+    def __init__(
+        self,
+        cookie_file: str,
+        submit_api: str = "auto",
+        upload_line: str = "auto",
+        request_scope: Optional[dict] = None,
+    ):
         self.cookie_file = cookie_file
         self.submit_api = normalize_submit_api(submit_api)
         self.upload_line = upload_line
         self.logger = None
         self.task_id = None
+        # None 表示沿用进程默认请求设置。账号上传会传入 {proxy, trust_env}。
+        self.request_scope = request_scope
+        self.account_id = None
+        self.account_name = ""
+        self.risk_codes: List[int] = []
 
     def log(self, message: str):
+        text = _redact_proxy_credentials(message)
         if self.logger:
-            self.logger.info(message)
+            self.logger.info(text)
         else:
-            print(message)
+            print(text)
+
+    def _note_risk(self, exc: Exception, submit_attempts: Optional[Sequence[dict]] = None) -> None:
+        codes = list(self.risk_codes)
+        if _is_bilibili_http_406(exc):
+            codes.append(406)
+        response_code = _extract_response_code_from_exception(exc)
+        if response_code in (137022, 603):
+            codes.append(response_code)
+        if _is_bilibili_account_risk(exc) or _submit_attempts_hit_account_risk(submit_attempts):
+            codes.append(603)
+        for attempt in submit_attempts or ():
+            if not isinstance(attempt, dict):
+                continue
+            if attempt.get("code") in (406, 137022, 603):
+                codes.append(int(attempt["code"]))
+        deduped: List[int] = []
+        for code in codes:
+            if code not in deduped:
+                deduped.append(code)
+        self.risk_codes = deduped
+
+    def _run_in_account_scope(self, func):
+        if not self.request_scope:
+            return func()
+        from .bili_sdk.utils.network import bili_request_scope
+        with bili_request_scope(
+            self.request_scope.get("proxy") or "",
+            bool(self.request_scope.get("trust_env")),
+        ):
+            return func()
 
     def upload_video(
         self,
@@ -340,17 +397,22 @@ class BilibiliUploader:
         from modules.pipeline.gates import (
             arm_bilibili_137022,
             arm_bilibili_406,
+            arm_bilibili_603,
             bilibili_local_block_message,
             clear_submit_reuse,
             configured_137022_minutes,
             configured_406_minutes,
+            configured_603_minutes,
             peek_submit_reuse,
             save_submit_reuse,
         )
 
         try:
             runtime_config = load_config()
-            blocked = bilibili_local_block_message()
+            blocked = bilibili_local_block_message(
+                account_id=self.account_id or None,
+                account_name=self.account_name or "",
+            )
             if blocked:
                 self.log(blocked)
                 return False, blocked
@@ -363,13 +425,17 @@ class BilibiliUploader:
                 return False, f"封面文件不存在: {cover_file_path}"
 
             credential = load_credential_from_file(self.cookie_file)
-            credential_ok, credential_msg = validate_credential_remote(credential)
+            if self.request_scope is not None:
+                credential.proxy = self.request_scope.get("proxy") or ""
+            credential_ok, credential_msg = self._run_in_account_scope(
+                lambda: validate_credential_remote(credential)
+            )
             if not credential_ok:
                 return False, f"Bilibili登录态无效: {credential_msg}。请在设置页重新扫码登录后重试上传。"
 
             # 首次运行时生成 buvid3/buvid4/_uuid 并回写 Cookie 文件，
             # 之后每次上传复用同一套设备指纹，避免被当成"每次换设备"。
-            if ensure_credential_buvid(credential):
+            if self._run_in_account_scope(lambda: ensure_credential_buvid(credential)):
                 if save_credential_to_file(credential, self.cookie_file):
                     self.log("已生成并保存 bilibili 设备指纹（buvid3/buvid4）")
                 else:
@@ -562,13 +628,19 @@ class BilibiliUploader:
 
             _emit_progress("0.0%")
             self.log("开始上传到bilibili")
-            try:
-                result = asyncio.run(uploader.start())
-            except RuntimeError:
-                # 已有事件循环时，在新线程中运行
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    result = pool.submit(asyncio.run, uploader.start()).result()
+
+            def _start_upload():
+                try:
+                    return asyncio.run(uploader.start())
+                except RuntimeError:
+                    # 已有事件循环时，在新线程中运行，并带上当前账号的代理范围。
+                    import concurrent.futures
+                    import contextvars
+                    ctx = contextvars.copy_context()
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        return pool.submit(ctx.run, asyncio.run, uploader.start()).result()
+
+            result = self._run_in_account_scope(_start_upload)
 
             _emit_progress("100.0%")
             self.log(f"bilibili上传完成: {result}")
@@ -601,9 +673,14 @@ class BilibiliUploader:
                 f" 详细错误: {e}"
             )
         except ResponseCodeException as e:
+            self._note_risk(e, submit_attempts)
             pretty_error = _format_bilibili_exception(e)
             if _is_bilibili_http_406(e):
-                remaining, _refreshed = arm_bilibili_406(configured_406_minutes(runtime_config))
+                remaining, _refreshed = arm_bilibili_406(
+                    configured_406_minutes(runtime_config),
+                    account_id=self.account_id or None,
+                    account_name=self.account_name or "",
+                )
                 pretty_error = (
                     f"{_bilibili_406_hint()} "
                     f"已进入风控冷却，剩余约 {max(1, int(remaining // 60))} 分钟，期间不会再请求 Bilibili。"
@@ -611,7 +688,9 @@ class BilibiliUploader:
                 self.log(f"Bilibili HTTP 406 风控：{pretty_error}")
             elif _extract_response_code_from_exception(e) == 137022:
                 remaining, _refreshed = arm_bilibili_137022(
-                    configured_137022_minutes(runtime_config)
+                    configured_137022_minutes(runtime_config),
+                    account_id=self.account_id or None,
+                    account_name=self.account_name or "",
                 )
                 payload = getattr(uploader, "submit_reuse_payload", None) if uploader else None
                 if isinstance(payload, dict):
@@ -633,12 +712,25 @@ class BilibiliUploader:
             ):
                 # 只要任一条通道撞上 603 就提示：auto 下必剪 603、Web 又抛 -352 时，
                 # 最终异常不是 603，但最有价值的排障信息仍然在 603 里。
-                pretty_error = f"{pretty_error}。{_bilibili_603_hint(submit_attempts)}"
+                remaining, _refreshed = arm_bilibili_603(
+                    configured_603_minutes(runtime_config),
+                    account_id=self.account_id or None,
+                    account_name=self.account_name or "",
+                )
+                pretty_error = (
+                    f"{pretty_error}。{_bilibili_603_hint(submit_attempts)}"
+                    f" 已进入该账号的风控冷却，剩余约 {max(1, int(remaining // 60))} 分钟，其他账号不受影响。"
+                )
             self.log(f"bilibili上传异常: {pretty_error}")
             return False, f"bilibili上传异常: {pretty_error}"
         except Exception as e:
+            self._note_risk(e, submit_attempts)
             if _is_bilibili_http_406(e):
-                remaining, _refreshed = arm_bilibili_406(configured_406_minutes(runtime_config))
+                remaining, _refreshed = arm_bilibili_406(
+                    configured_406_minutes(runtime_config),
+                    account_id=self.account_id or None,
+                    account_name=self.account_name or "",
+                )
                 hint = (
                     f"{_bilibili_406_hint()} "
                     f"已进入风控冷却，剩余约 {max(1, int(remaining // 60))} 分钟，期间不会再请求 Bilibili。"
@@ -649,9 +741,15 @@ class BilibiliUploader:
             if _is_bilibili_account_risk(e) or _submit_attempts_hit_account_risk(
                 submit_attempts
             ):
+                remaining, _refreshed = arm_bilibili_603(
+                    configured_603_minutes(runtime_config),
+                    account_id=self.account_id or None,
+                    account_name=self.account_name or "",
+                )
                 hint = (
                     f"{_format_bilibili_exception(e)}。"
                     f"{_bilibili_603_hint(submit_attempts)}"
+                    f" 已进入该账号的风控冷却，剩余约 {max(1, int(remaining // 60))} 分钟，其他账号不受影响。"
                 )
                 self.log(f"bilibili上传异常: {hint}")
                 self.log(traceback.format_exc())

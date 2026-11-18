@@ -40,6 +40,13 @@
     </div>
     {% endif %}
 
+    {% for item in gates.bili_account_cooldowns or [] %}
+    <div class="alert alert-warning mb-0" role="status">
+        bilibili 账号「{{ item.name }}」正在冷却（{{ item.label }}），剩余 {{ item.remaining_display }}，到 {{ item.until_display }} 为止。其他账号不受影响。
+        {% if item.code == '137022' %}已经传完的文件会在冷却结束后只重试提交。{% endif %}
+    </div>
+    {% endfor %}
+
     {% if gates.bili_406.active %}
     <div class="alert alert-warning mb-0" role="status">
         Bilibili 风控冷却（HTTP 406 / preupload）生效中，剩余 {{ gates.bili_406.remaining_display }}，到 {{ gates.bili_406.until_display }} 为止不会请求 Bilibili。

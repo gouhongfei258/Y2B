@@ -84,22 +84,28 @@ def build_upload_description(
     original_uploader: str = "",
     original_upload_date: str = "",
     append_repost_notice: bool = True,
-    max_len: int = ACFUN_DESCRIPTION_LIMIT
+    max_len: int = ACFUN_DESCRIPTION_LIMIT,
+    repost_notice_text: str = "",
 ) -> str:
     """
     构建最终投稿简介：
     - 转载且 append_repost_notice=True: 转载声明 + 摘要
     - 其他情况: 仅正文摘要
+    - repost_notice_text 非空时替换固定的「本视频转载自YouTube…」文案
     """
     is_repost = bool(original_url or original_uploader or original_upload_date)
     if not is_repost or not append_repost_notice:
         return compact_text(base_desc, max_len)
 
-    repost_notice = "本视频转载自YouTube"
-    if original_upload_date:
-        repost_notice += f"，原始上传时间：{original_upload_date}"
-    if original_uploader:
-        repost_notice += f"，UP主：{original_uploader}"
+    custom_notice = str(repost_notice_text or "").strip()
+    if custom_notice:
+        repost_notice = custom_notice
+    else:
+        repost_notice = "本视频转载自YouTube"
+        if original_upload_date:
+            repost_notice += f"，原始上传时间：{original_upload_date}"
+        if original_uploader:
+            repost_notice += f"，UP主：{original_uploader}"
     repost_notice = compact_text(repost_notice, max_len)
 
     summary = compact_text(base_desc, max(0, max_len - len(repost_notice) - 2))
@@ -850,7 +856,7 @@ class AcfunUploader:
                      partition_id, original_url=None, original_uploader=None, 
                      original_upload_date=None, upload_append_repost_notice=True,
                      task_id=None, cover_mode='crop',
-                     cancel_event=None):
+                     cancel_event=None, repost_notice_text=""):
         """
         上传视频到AcFun
         
@@ -914,7 +920,8 @@ class AcfunUploader:
                 original_uploader=original_uploader or "",
                 original_upload_date=original_upload_date or "",
                 append_repost_notice=bool(upload_append_repost_notice),
-                max_len=max_desc
+                max_len=max_desc,
+                repost_notice_text=repost_notice_text or "",
             )
 
             # 判断视频创作类型
