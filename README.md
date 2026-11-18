@@ -2,7 +2,7 @@
 
 # Y2A-Auto
 
-<img src="static/img/favicon.png" width="96" alt="Y2A-Auto Logo" />
+<img src="frontend/static/img/favicon.png" width="96" alt="Y2A-Auto Logo" />
 
 将 YouTube 视频自动搬运到 AcFun / bilibili 的一体化工具。
 
@@ -34,12 +34,12 @@
 ## 项目展示
 
 <p align="center">
-  <img src="static/img/readme/dashboard-real.png" alt="Dashboard Screenshot" width="92%" />
+  <img src="frontend/static/img/readme/dashboard-real.png" alt="Dashboard Screenshot" width="92%" />
 </p>
 
 <p align="center">
-  <img src="static/img/readme/monitor-real.png" alt="Monitor Screenshot" width="45%" />
-  <img src="static/img/readme/settings-real.png" alt="Settings Screenshot" width="45%" />
+  <img src="frontend/static/img/readme/monitor-real.png" alt="Monitor Screenshot" width="45%" />
+  <img src="frontend/static/img/readme/settings-real.png" alt="Settings Screenshot" width="45%" />
 </p>
 
 <div align="center">
@@ -105,26 +105,26 @@
 
 ```text
 Y2A-Auto/
-├── app.py
+├── app.py                 # 兼容入口：python app.py
+├── run.py                 # 与 app.py 相同的开发启动
+├── wsgi.py                # WSGI 入口（wsgi:app，导入时完成一次启动）
+├── app/                   # Flask 工厂、Blueprints、请求处理
+├── frontend/
+│   ├── templates/
+│   └── static/
+├── y2b/                   # 业务代码（pipeline、media、subtitles、youtube、bilibili、acfun、ai、…）
+├── modules/               # 兼容层，把旧的 modules.* 导入转到 y2b
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker-compose-build.yml
 ├── acfunid/
 ├── build-tools/
-├── config/
-├── cookies/
-├── db/
-├── downloads/
-├── ffmpeg/
 ├── fonts/
-├── logs/
-├── modules/
-├── static/
-├── temp/
-├── templates/
 └── tests/
 ```
+
+运行时数据目录仍在仓库根下：`config/`、`cookies/`、`db/`、`downloads/`、`logs/`、`temp/`。
 
 ## 快速开始
 
@@ -628,7 +628,7 @@ ssh -N -L 5000:127.0.0.1:5000 -o ServerAliveInterval=30 user@<服务器公网IP>
 - [FFmpeg](https://ffmpeg.org/)
 - [Flask](https://flask.palletsprojects.com/)
 - Bilibili 平台上传的技术参考资料
-  - 项目内的 `modules/bili_sdk` 部分参考了社区开源项目，针对上传流程做了适配。
+  - 项目内的 `y2b/bilibili/bili_sdk`（兼容路径 `modules/bili_sdk`）部分参考了社区开源项目，针对上传流程做了适配。
 - [OpenAI](https://openai.com/)
 
 ## 许可证

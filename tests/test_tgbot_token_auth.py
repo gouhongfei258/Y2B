@@ -9,7 +9,7 @@ from functools import wraps
 
 
 def _load_token_helpers(*names):
-    app_path = pathlib.Path(__file__).resolve().parents[1] / "app.py"
+    app_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "services.py"
     source = app_path.read_text(encoding="utf-8")
     module_ast = ast.parse(source, filename=str(app_path))
     requested = set(names)

@@ -158,7 +158,7 @@ class BilibiliAuthTests(unittest.TestCase):
 class BilibiliUploaderDiagnosticTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        module_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "bilibili_uploader.py"
+        module_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "bilibili" / "bilibili_uploader.py"
         source = module_path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(module_path))
         function_names = {

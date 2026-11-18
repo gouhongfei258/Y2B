@@ -144,11 +144,11 @@ class SamePageActionRouteTests(unittest.TestCase):
 
 class SamePageTemplateTests(unittest.TestCase):
     def test_same_page_forms_opt_in_and_navigation_forms_do_not(self):
-        tasks = (REPO_ROOT / 'templates' / 'tasks.html').read_text(encoding='utf-8')
-        base = (REPO_ROOT / 'templates' / 'base.html').read_text(encoding='utf-8')
-        login = (REPO_ROOT / 'templates' / 'login.html').read_text(encoding='utf-8')
-        settings = (REPO_ROOT / 'templates' / 'settings.html').read_text(encoding='utf-8')
-        monitor = (REPO_ROOT / 'templates' / 'youtube_monitor.html').read_text(encoding='utf-8')
+        tasks = (REPO_ROOT / 'frontend' / 'templates' / 'tasks.html').read_text(encoding='utf-8')
+        base = (REPO_ROOT / 'frontend' / 'templates' / 'base.html').read_text(encoding='utf-8')
+        login = (REPO_ROOT / 'frontend' / 'templates' / 'login.html').read_text(encoding='utf-8')
+        settings = (REPO_ROOT / 'frontend' / 'templates' / 'settings.html').read_text(encoding='utf-8')
+        monitor = (REPO_ROOT / 'frontend' / 'templates' / 'youtube_monitor.html').read_text(encoding='utf-8')
 
         self.assertIn('data-same-page="refresh-tasks"', tasks)
         self.assertIn('data-same-page="toast"', settings)
@@ -159,7 +159,7 @@ class SamePageTemplateTests(unittest.TestCase):
         self.assertNotIn('data-same-page', login)
         logout_form = base.split("url_for('logout')", 1)[1].split('</form>', 1)[0]
         self.assertNotIn('data-same-page', logout_form)
-        banner = (REPO_ROOT / 'templates' / 'partials' / 'runtime_gates_banner.html').read_text(encoding='utf-8')
+        banner = (REPO_ROOT / 'frontend' / 'templates' / 'partials' / 'runtime_gates_banner.html').read_text(encoding='utf-8')
         self.assertIn('data-same-page="refresh-gates"', banner)
         self.assertIn("{% include 'partials/runtime_gates_banner.html' %}", tasks)
 

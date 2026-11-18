@@ -1,59 +1,13 @@
-from .adapters import (
-    ALL_CHANNELS,
-    CHANNEL_LABELS,
-    CHANNEL_MESSAGE_PUSHER,
-    CHANNEL_SERVERCHAN,
-    CHANNEL_WECOM,
-    iter_enabled_channel_ids,
-    validate_channel_config_fields,
-)
-from .models import (
-    ALL_EVENT_TYPES,
-    EVENT_LOGIN_LOCKED,
-    EVENT_LOGIN_SUCCESS,
-    EVENT_QR_LOGIN_FAILED,
-    EVENT_QR_LOGIN_SUCCESS,
-    EVENT_TASK_ADDED,
-    EVENT_TASK_COMPLETED,
-    EVENT_TASK_FAILED,
-    NotificationEvent,
-    NotificationMessage,
-)
-from .renderers import build_notification_message
-from .service import (
-    DEFAULT_RETRY_SCHEDULE_SECONDS,
-    NotificationService,
-    emit_notification_event,
-    get_global_notification_service,
-    is_notification_enabled,
-    is_notification_event_enabled,
-    shutdown_global_notification_service,
-)
+"""Compatibility shim for y2b.notifications.
 
-__all__ = [
-    "ALL_CHANNELS",
-    "ALL_EVENT_TYPES",
-    "CHANNEL_LABELS",
-    "CHANNEL_MESSAGE_PUSHER",
-    "CHANNEL_SERVERCHAN",
-    "CHANNEL_WECOM",
-    "DEFAULT_RETRY_SCHEDULE_SECONDS",
-    "EVENT_LOGIN_LOCKED",
-    "EVENT_LOGIN_SUCCESS",
-    "EVENT_QR_LOGIN_FAILED",
-    "EVENT_QR_LOGIN_SUCCESS",
-    "EVENT_TASK_ADDED",
-    "EVENT_TASK_COMPLETED",
-    "EVENT_TASK_FAILED",
-    "NotificationEvent",
-    "NotificationMessage",
-    "NotificationService",
-    "build_notification_message",
-    "emit_notification_event",
-    "get_global_notification_service",
-    "is_notification_enabled",
-    "is_notification_event_enabled",
-    "iter_enabled_channel_ids",
-    "shutdown_global_notification_service",
-    "validate_channel_config_fields",
-]
+This package object stays here so its submodule shims can load.
+Attributes are re-exported from the implementation package.
+"""
+import importlib
+
+_impl = importlib.import_module("y2b.notifications")
+globals().update({
+    _name: getattr(_impl, _name)
+    for _name in dir(_impl)
+    if not _name.startswith("__")
+})

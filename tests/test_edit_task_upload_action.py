@@ -16,7 +16,7 @@ import re
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-TEMPLATE = REPO_ROOT / "templates" / "edit_task.html"
+TEMPLATE = REPO_ROOT / "frontend" / "templates" / "edit_task.html"
 
 
 class EditTaskUploadActionRegressionTests(unittest.TestCase):

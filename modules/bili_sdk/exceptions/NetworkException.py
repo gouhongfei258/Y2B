@@ -1,28 +1,11 @@
-"""
-bilibili_api.exceptions.NetworkException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.NetworkException."""
+import importlib
+import sys
 
-网络错误。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.NetworkException"
 
-from .ApiException import ApiException
-
-
-class NetworkException(ApiException):
-    """
-    网络错误。
-    """
-
-    def __init__(self, status: int, msg: str):
-        """
-
-        Args:
-            status (int):   状态码。
-
-            msg (str):      状态消息。
-        """
-        super().__init__(msg)
-        self.status = status
-        self.msg = f"网络错误，状态码：{status} - {msg}。"
-
-    def __str__(self):
-        return self.msg
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

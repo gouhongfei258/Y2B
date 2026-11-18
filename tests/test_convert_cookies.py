@@ -309,7 +309,7 @@ class EnsureNetscapeCookiesTests(unittest.TestCase):
 class YoutubeHandlerCookieWiringTests(unittest.TestCase):
     def test_handlers_call_ensure_netscape_cookies(self):
         root = pathlib.Path(__file__).resolve().parents[1]
-        source = (root / "modules" / "youtube_handler.py").read_text(encoding="utf-8")
+        source = (root / "y2b" / "youtube" / "youtube_handler.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         targets = {"download_video_data", "extract_video_urls_from_playlist"}
         functions = {

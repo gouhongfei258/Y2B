@@ -92,9 +92,11 @@ def create_spec_file():
     
     # 列出期望打包的数据路径（相对于 build-tools 目录）
     candidate_datas = [
-        ('../templates', 'templates'),
-        ('../static', 'static'),
+        ('../frontend/templates', 'frontend/templates'),
+        ('../frontend/static', 'frontend/static'),
         ('../modules', 'modules'),
+        ('../y2b', 'y2b'),
+        ('../app', 'app'),
         ('../acfunid', 'acfunid'),
         ('../fonts', 'fonts'),
         ('../app.py', '.'),
@@ -224,7 +226,7 @@ hiddenimports = [
     'alibabacloud_tea_util',
     'alibabacloud_tea_util.models',
     'oss2',
-] + collect_submodules('cryptography') + collect_submodules('yt_dlp') + curl_cffi_hiddenimports
+] + collect_submodules('cryptography') + collect_submodules('yt_dlp') + collect_submodules('y2b') + collect_submodules('app') + curl_cffi_hiddenimports
 
 a = Analysis(
     ['setup_app.py'],
@@ -260,7 +262,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../static/img/favicon.ico' if os.path.exists('../static/img/favicon.ico') else None,
+    icon='../frontend/static/img/favicon.ico' if os.path.exists('../frontend/static/img/favicon.ico') else None,
 )
 
 coll = COLLECT(

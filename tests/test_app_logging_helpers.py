@@ -5,7 +5,7 @@ import unittest
 
 
 def _load_functions(*names):
-    app_path = pathlib.Path(__file__).resolve().parents[1] / "app.py"
+    app_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "services.py"
     source = app_path.read_text(encoding="utf-8")
     module_ast = ast.parse(source, filename=str(app_path))
     selected = [
@@ -122,7 +122,7 @@ class AppLoggingHelperTests(unittest.TestCase):
         self.assertNotIn("Exception", message)
 
     def test_settings_save_progress_does_not_return_exception_text(self):
-        app_path = pathlib.Path(__file__).resolve().parents[1] / "app.py"
+        app_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "services.py"
         source = app_path.read_text(encoding="utf-8")
 
         self.assertNotIn("_append_settings_message(messages, 'danger', f'保存设置失败: {e}')", source)

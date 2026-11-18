@@ -5,7 +5,7 @@ import unittest
 
 
 def _load_acfun_helpers():
-    module_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "acfun_uploader.py"
+    module_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "acfun" / "acfun_uploader.py"
     source = module_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(module_path))
 
@@ -28,7 +28,7 @@ def _load_acfun_helpers():
 
 
 def _load_bilibili_helpers():
-    module_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "bilibili_uploader.py"
+    module_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "bilibili" / "bilibili_uploader.py"
     source = module_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(module_path))
 
@@ -56,7 +56,7 @@ def _load_bilibili_helpers():
 
 
 def _load_ai_output_limits():
-    module_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "ai_enhancer.py"
+    module_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "ai" / "ai_enhancer.py"
     source = module_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(module_path))
 
@@ -71,7 +71,7 @@ def _load_ai_output_limits():
 
 
 def _load_task_manager_limit_helper():
-    module_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "task_manager.py"
+    module_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "pipeline" / "task_manager.py"
     source = module_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(module_path))
 

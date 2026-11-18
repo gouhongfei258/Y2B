@@ -1,18 +1,11 @@
-"""
-bilibili_api.exceptions.ApiException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.ApiException."""
+import importlib
+import sys
 
-API 异常基类。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.ApiException"
 
-
-class ApiException(Exception):
-    """
-    API 基类异常。
-    """
-
-    def __init__(self, msg: str = "出现了错误，但是未说明具体原因。"):
-        super().__init__(msg)
-        self.msg = msg
-
-    def __str__(self):
-        return self.msg
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

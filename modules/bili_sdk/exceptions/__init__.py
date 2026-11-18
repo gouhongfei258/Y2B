@@ -1,17 +1,13 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.
 
-from .ApiException import *
-from .ArgsException import *
-from .CookiesRefreshException import *
-from .CredentialNoAcTimeValueException import *
-from .CredentialNoBiliJctException import *
-from .CredentialNoBuvid3Exception import *
-from .CredentialNoBuvid4Exception import *
-from .CredentialNoDedeUserIDException import *
-from .CredentialNoSessdataException import *
-from .ExClimbWuzhiException import *
-from .NetworkException import *
-from .ResponseCodeException import *
-from .StatementException import *
-from .WbiRetryTimesExceedException import *
+This package object stays here so its submodule shims can load.
+Attributes are re-exported from the implementation package.
+"""
+import importlib
+
+_impl = importlib.import_module("y2b.bilibili.bili_sdk.exceptions")
+globals().update({
+    _name: getattr(_impl, _name)
+    for _name in dir(_impl)
+    if not _name.startswith("__")
+})

@@ -20,7 +20,7 @@ def _safe_join(base, *paths):
 
 
 def _load_delete_helpers(downloads_dir):
-    task_manager_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "task_manager.py"
+    task_manager_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "pipeline" / "task_manager.py"
     source = task_manager_path.read_text(encoding="utf-8")
     module_ast = ast.parse(source, filename=str(task_manager_path))
     selected = [

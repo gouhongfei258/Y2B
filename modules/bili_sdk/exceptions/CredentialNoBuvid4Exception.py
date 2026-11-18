@@ -1,17 +1,11 @@
-"""
-bilibili_api.exceptions.CredentialNoBuvid4Exception
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.CredentialNoBuvid4Exception."""
+import importlib
+import sys
 
-Credential 类未提供 buvid4 时的异常。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.CredentialNoBuvid4Exception"
 
-from .ApiException import ApiException
-
-
-class CredentialNoBuvid4Exception(ApiException):
-    """
-    Credential 类未提供 buvid4 时的异常。
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.msg = "Credential 类未提供 buvid4 或者为空。"
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

@@ -374,7 +374,7 @@ class UploadPathTagResolutionTests(unittest.TestCase):
 class UploadPathWiringTests(unittest.TestCase):
     def test_上传路径都使用平台感知的标签解析(self):
         source = pathlib.Path(tm.__file__).resolve().parent.joinpath(
-            'pipeline', 'upload.py'
+            'upload.py'
         ).read_text(encoding='utf-8')
         acfun_body = _function_source(source, '_do_upload_to_acfun')
         bilibili_body = _function_source(source, '_do_upload_to_bilibili')
@@ -422,9 +422,9 @@ class PlatformLimitsContractTests(unittest.TestCase):
     def test_平台上限与上传器实现一致(self):
         # 上传器里的硬编码上限一旦变化，tag_presets 的常量必须同步，否则会出现
         # 「解析时说能放 12 个、上传器只收 6 个」的静默丢失。
-        root = pathlib.Path(tm.__file__).resolve().parents[1]
-        acfun_source = (root / 'modules' / 'acfun_uploader.py').read_text(encoding='utf-8')
-        bilibili_source = (root / 'modules' / 'bilibili_uploader.py').read_text(encoding='utf-8')
+        root = pathlib.Path(__file__).resolve().parents[1]
+        acfun_source = (root / 'y2b' / 'acfun' / 'acfun_uploader.py').read_text(encoding='utf-8')
+        bilibili_source = (root / 'y2b' / 'bilibili' / 'bilibili_uploader.py').read_text(encoding='utf-8')
         self.assertIn(f'len(tags) > {tp.ACFUN_TAG_LIMIT}', acfun_source)
         self.assertIn(f'safe_tags[:{tp.BILIBILI_TAG_LIMIT}]', bilibili_source)
         self.assertIn(f'[:{tp.BILIBILI_TAG_MAX_LEN}]', bilibili_source)

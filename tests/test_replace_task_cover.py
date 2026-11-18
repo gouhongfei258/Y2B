@@ -30,7 +30,7 @@ def _load_cover_helpers(downloads_dir, mock_update_task):
     from PIL import Image, UnidentifiedImageError
     from werkzeug.security import safe_join
 
-    app_path = pathlib.Path(__file__).resolve().parents[1] / "app.py"
+    app_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "services.py"
     source = app_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(app_path))
 

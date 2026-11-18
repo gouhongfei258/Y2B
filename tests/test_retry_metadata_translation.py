@@ -226,13 +226,13 @@ class RetryMetadataTranslationTests(unittest.TestCase):
 
     def test_manual_review_template_includes_server_side_eligibility_and_data_loss_warning(self):
         root = pathlib.Path(__file__).resolve().parents[1]
-        template = (root / 'templates' / 'manual_review.html').read_text(encoding='utf-8')
-        app_source = (root / 'app.py').read_text(encoding='utf-8')
+        template = (root / 'frontend' / 'templates' / 'manual_review.html').read_text(encoding='utf-8')
+        app_source = (root / 'app' / 'blueprints' / 'tasks.py').read_text(encoding='utf-8')
 
         self.assertIn('{% if task.can_retry_translation %}', template)
         self.assertIn('id="retryTranslationForm" method="post"', template)
         self.assertIn('已手动修改的标题、简介、标签和分区选择将被清空并重新生成。', template)
-        self.assertIn("@app.route('/tasks/<task_id>/retry_translation', methods=['POST'])", app_source)
+        self.assertIn("@bp.route('/tasks/<task_id>/retry_translation', methods=['POST'])", app_source)
         self.assertIn('if not is_metadata_translation_retryable(task):', app_source)
 
 
