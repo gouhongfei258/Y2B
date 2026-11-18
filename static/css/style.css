@@ -1125,6 +1125,10 @@ body.login-fullscreen {
     width: 100%;
 }
 
+.app-toast-container {
+    z-index: 1090;
+}
+
 .builtin-prompt-pre {
     white-space: pre-wrap;
     word-break: break-all;

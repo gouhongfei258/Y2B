@@ -6,7 +6,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-youtube text-danger"></i> YouTube监控系统</h2>
     <div>
-        <form method="POST" action="{{ url_for('youtube_monitor_restore_configs') }}" class="d-inline me-2" onsubmit="return confirm('确定要从配置文件恢复监控配置吗？这将从 config/youtube_monitor/ 目录中读取配置文件并恢复到数据库中。')">
+        <form method="POST" action="{{ url_for('youtube_monitor_restore_configs') }}" class="d-inline me-2" data-same-page="refresh-region" data-refresh-root="#monitor-configs,#monitor-history" onsubmit="return confirm('确定要从配置文件恢复监控配置吗？这将从 config/youtube_monitor/ 目录中读取配置文件并恢复到数据库中。')">
             <button type="submit" class="btn btn-outline-info">
                 <i class="bi bi-arrow-clockwise"></i> 恢复配置
             </button>
@@ -18,7 +18,7 @@
 </div>
 
 <!-- 监控配置列表 -->
-<div class="row mb-5">
+<div class="row mb-5" id="monitor-configs">
     <div class="col-12">
         <h4><i class="bi bi-list-ul"></i> 监控配置</h4>
         {% if configs %}
@@ -134,7 +134,7 @@
                                 <a href="{{ url_for('youtube_monitor_config_edit', config_id=config.id) }}" class="btn btn-outline-warning btn-icon" title="编辑">
                                     <i class="bi bi-pencil"></i>
                                 </a>
-                                <form method="POST" action="{{ url_for('youtube_monitor_config_delete', config_id=config.id) }}" class="d-inline" onsubmit="return confirm('确定要删除监控配置 ' + {{ config.name|tojson }} + ' 吗？')">
+                                <form method="POST" action="{{ url_for('youtube_monitor_config_delete', config_id=config.id) }}" class="d-inline" data-same-page="refresh-region" data-refresh-root="#monitor-configs,#monitor-history" onsubmit="return confirm('确定要删除监控配置 ' + {{ config.name|tojson }} + ' 吗？')">
                                     <button type="submit" class="btn btn-outline-danger btn-icon" title="删除">
                                         <i class="bi bi-trash"></i>
                                     </button>
@@ -155,12 +155,12 @@
 </div>
 
 <!-- 最近的监控历史 -->
-<div class="row">
+<div class="row" id="monitor-history">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-3">
         <h4><i class="bi bi-clock-history"></i> 最近的监控记录</h4>
             {% if history %}
-            <form method="POST" action="{{ url_for('youtube_monitor_clear_all_history') }}" class="d-inline" onsubmit="return confirm('确定要清除所有监控历史记录吗？此操作不可恢复！')">
+            <form method="POST" action="{{ url_for('youtube_monitor_clear_all_history') }}" class="d-inline" data-same-page="refresh-region" data-refresh-root="#monitor-configs,#monitor-history" onsubmit="return confirm('确定要清除所有监控历史记录吗？此操作不可恢复！')">
                 <button type="submit" class="btn btn-outline-danger btn-sm">
                     <i class="bi bi-trash"></i> 清除所有历史记录
                 </button>
@@ -393,7 +393,20 @@ function bindMonitorRunForms() {
                         if (payload.success) {
                             button.innerHTML = '<i class="bi bi-check2"></i>';
                             showAlert('success', payload.message || '监控执行完成');
-                            window.setTimeout(() => window.location.reload(), 900);
+                            const refresh = window.y2bRefreshRegions
+                                ? window.y2bRefreshRegions(['#monitor-configs', '#monitor-history'])
+                                : Promise.resolve(0);
+                            refresh.then((count) => {
+                                if (!count && document.body.contains(button)) {
+                                    button.disabled = false;
+                                    button.innerHTML = originalHtml;
+                                }
+                            }).catch(() => {
+                                if (document.body.contains(button)) {
+                                    button.disabled = false;
+                                    button.innerHTML = originalHtml;
+                                }
+                            });
                             return;
                         }
 
@@ -464,6 +477,11 @@ function addToTasks(videoId, configId) {
 }
 
 function showAlert(type, message) {
+    if (window.y2bShowToast) {
+        const category = type === 'danger' ? 'danger' : type;
+        window.y2bShowToast(category, message);
+        return;
+    }
     // 创建并显示提示消息
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type} alert-dismissible fade show`;

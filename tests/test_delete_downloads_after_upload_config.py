@@ -20,7 +20,7 @@ class DeleteDownloadsAfterUploadConfigTests(unittest.TestCase):
         self.assertIn("'DELETE_DOWNLOAD_FILES_AFTER_UPLOAD'", app_source)
 
     def test_upload_cleanup_is_guarded_by_option_for_both_platform_handlers(self):
-        source = (ROOT / 'modules' / 'task_manager.py').read_text(encoding='utf-8')
+        source = (ROOT / 'modules' / 'pipeline' / 'upload.py').read_text(encoding='utf-8')
         option_guard = "self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)"
 
         self.assertEqual(source.count(option_guard), 2)

@@ -1,6 +1,6 @@
 {% set gates = runtime_gates if runtime_gates is defined else none %}
 {% if gates %}
-<div class="d-flex flex-column gap-2 mb-3">
+<div id="runtime-gates-banner" class="d-flex flex-column gap-2 mb-3">
     {% if gates.bot.active or gates.bot.retries %}
     <div class="alert alert-danger mb-0" role="status">
         <div class="fw-semibold">YouTube 下载熔断</div>
@@ -14,12 +14,12 @@
         </div>
         <div class="d-flex flex-wrap gap-2 mt-2">
             {% if gates.bot.active %}
-            <form method="post" action="{{ url_for('bot_circuit_resume_route') }}" class="d-inline">
+            <form method="post" action="{{ url_for('bot_circuit_resume_route') }}" class="d-inline" data-same-page="refresh-gates">
                 <input type="hidden" name="next" value="{{ next_page|default('index') }}">
                 <button type="submit" class="btn btn-sm btn-light">立即恢复</button>
             </form>
             {% endif %}
-            <form method="post" action="{{ url_for('bot_circuit_reset_route') }}" class="d-inline">
+            <form method="post" action="{{ url_for('bot_circuit_reset_route') }}" class="d-inline" data-same-page="refresh-gates">
                 <input type="hidden" name="next" value="{{ next_page|default('index') }}">
                 <button type="submit" class="btn btn-sm btn-outline-light">重置熔断</button>
             </form>
@@ -55,16 +55,30 @@
 
     <div class="d-flex flex-wrap gap-2">
         {% if gates.manual_pause %}
-        <form method="post" action="{{ url_for('resume_downloads_route') }}">
+        <form method="post" action="{{ url_for('resume_downloads_route') }}" data-same-page="refresh-gates">
             <input type="hidden" name="next" value="{{ next_page|default('index') }}">
             <button type="submit" class="btn btn-success btn-sm">恢复下载</button>
         </form>
         {% else %}
-        <form method="post" action="{{ url_for('pause_downloads_route') }}">
+        <form method="post" action="{{ url_for('pause_downloads_route') }}" data-same-page="refresh-gates">
             <input type="hidden" name="next" value="{{ next_page|default('index') }}">
             <button type="submit" class="btn btn-outline-warning btn-sm">暂停下载</button>
         </form>
         {% endif %}
     </div>
 </div>
+<script>
+window.y2bSamePageHandlers = window.y2bSamePageHandlers || {};
+if (!window.y2bSamePageHandlers['refresh-gates']) {
+    window.y2bSamePageHandlers['refresh-gates'] = function (form, data) {
+        if (typeof window.y2bRefreshRegions === 'function') {
+            window.y2bRefreshRegions(['#runtime-gates-banner']);
+        }
+        var tasksHandler = window.y2bSamePageHandlers['refresh-tasks'];
+        if (typeof tasksHandler === 'function') {
+            tasksHandler(form, data);
+        }
+    };
+}
+</script>
 {% endif %}

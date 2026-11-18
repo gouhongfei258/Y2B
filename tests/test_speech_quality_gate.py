@@ -1181,7 +1181,7 @@ class CheckpointGateConsistencyTests(unittest.TestCase):
         """
         source_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'modules', 'task_manager.py')
+            'modules', 'pipeline', 'upload.py')
         with open(source_path, encoding='utf-8') as handle:
             source = handle.read()
         start = source.index('def _prepare_subtitle_for_upload')
@@ -1303,9 +1303,15 @@ class QcResultDecisionPointTests(unittest.TestCase):
         只允许 ``_qc_result_allows_embed`` 自身出现三态比较；三个调用点都必须
         调它。这里用计数而不是逐个 grep，避免把整份源码打进失败信息。
         """
-        source = open(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         'modules', 'task_manager.py'), encoding='utf-8').read()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        source = '\n'.join(
+            open(os.path.join(root, relative), encoding='utf-8').read()
+            for relative in (
+                os.path.join('modules', 'task_manager.py'),
+                os.path.join('modules', 'subtitle', 'translate.py'),
+                os.path.join('modules', 'pipeline', 'upload.py'),
+            )
+        )
         inline_idiom = source.count('qc_result is True or qc_result is SUBTITLE_QC_DISABLED')
         helper_calls = source.count('_qc_result_allows_embed(')
         self.assertTrue(

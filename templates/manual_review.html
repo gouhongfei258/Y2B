@@ -7,11 +7,12 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2><i class="bi bi-check-square"></i> 人工审核列表</h2>
     </div>
-    
+
+    <div id="review-list">
     {% if tasks %}
         <div class="row row-cols-1 row-cols-md-2 g-4">
             {% for task in tasks %}
-                <div class="col">
+                <div class="col" data-review-task-id="{{ task.id }}">
                     <div class="card h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <span class="badge bg-warning"><i class="bi bi-hourglass-split"></i> 待审核</span>
@@ -216,6 +217,7 @@
             <i class="bi bi-info-circle"></i> 当前没有需要人工审核的任务。
         </div>
     {% endif %}
+    </div>
 </div>
 
 <!-- 重新翻译确认对话框 -->
@@ -240,7 +242,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="bi bi-x-circle"></i> 取消
                 </button>
-                <form id="retryTranslationForm" method="post" action="">
+                <form id="retryTranslationForm" method="post" action="" data-same-page="remove-review-task" data-close-modal="retryTranslationModal">
                     <button type="submit" class="btn btn-warning">
                         <i class="bi bi-arrow-clockwise"></i> 确认重新翻译
                     </button>
@@ -269,7 +271,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="bi bi-x-circle"></i> 取消
                 </button>
-                <form id="forceUploadForm" method="post" action="">
+                <form id="forceUploadForm" method="post" action="" data-same-page="remove-review-task" data-close-modal="forceUploadModal">
                     <button type="submit" class="btn btn-danger">
                         <i class="bi bi-upload"></i> 确认强制上传
                     </button>
@@ -300,7 +302,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="bi bi-x-circle"></i> 取消
                 </button>
-                <form id="abandonTaskForm" method="post" action="">
+                <form id="abandonTaskForm" method="post" action="" data-same-page="remove-review-task" data-close-modal="abandonTaskModal">
                     <input type="hidden" name="delete_files" id="abandonDeleteFilesInput" value="true">
                     <button type="submit" class="btn btn-danger">
                         <i class="bi bi-trash"></i> 确认放弃
@@ -364,7 +366,9 @@
     // 重新翻译确认
     function confirmRetryTranslation(taskId, taskTitle) {
         document.getElementById('retryTranslationTitle').textContent = taskTitle;
-        document.getElementById('retryTranslationForm').action = "{{ url_for('retry_metadata_translation_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        const retryForm = document.getElementById('retryTranslationForm');
+        retryForm.action = "{{ url_for('retry_metadata_translation_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        retryForm.dataset.taskId = taskId;
 
         new bootstrap.Modal(document.getElementById('retryTranslationModal')).show();
     }
@@ -372,7 +376,9 @@
     // 强制上传确认
     function confirmForceUpload(taskId, taskTitle) {
         document.getElementById('forceUploadTitle').textContent = taskTitle;
-        document.getElementById('forceUploadForm').action = "{{ url_for('force_upload_task_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        const forceForm = document.getElementById('forceUploadForm');
+        forceForm.action = "{{ url_for('force_upload_task_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        forceForm.dataset.taskId = taskId;
         
         // 显示模态框
         new bootstrap.Modal(document.getElementById('forceUploadModal')).show();
@@ -381,13 +387,31 @@
     // 放弃任务确认
     function confirmAbandon(taskId, taskTitle) {
         document.getElementById('abandonTaskTitle').textContent = taskTitle;
-        document.getElementById('abandonTaskForm').action = "{{ url_for('abandon_task_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        const abandonForm = document.getElementById('abandonTaskForm');
+        abandonForm.action = "{{ url_for('abandon_task_route', task_id='TASK_ID') }}".replace('TASK_ID', taskId);
+        abandonForm.dataset.taskId = taskId;
         
         // 显示模态框
         new bootstrap.Modal(document.getElementById('abandonTaskModal')).show();
     }
     
     // 绑定复选框变化（仅绑定一次）
+    window.y2bSamePageHandlers = window.y2bSamePageHandlers || {};
+    window.y2bSamePageHandlers['remove-review-task'] = function(form, data) {
+        if (!data || data.success === false) return;
+        const taskId = data.task_id || (form && form.getAttribute('data-task-id'));
+        if (data.removed && taskId) {
+            document.querySelectorAll('[data-review-task-id]').forEach(function(element) {
+                if (element.getAttribute('data-review-task-id') === String(taskId)) {
+                    element.remove();
+                }
+            });
+        }
+        if (window.y2bRefreshRegions) {
+            window.y2bRefreshRegions(['#review-list']).catch(function() {});
+        }
+    };
+
     const abandonDeleteFiles = document.getElementById('abandonDeleteFiles');
     if (abandonDeleteFiles) {
         abandonDeleteFiles.addEventListener('change', function() {

@@ -738,6 +738,136 @@ def _is_ajax_request() -> bool:
     return requested_with == 'XMLHttpRequest' or 'application/json' in accept_header
 
 
+_ACTION_FLASH_CATEGORIES = {'success', 'info', 'warning', 'danger'}
+
+
+def _settings_form_value(value):
+    """把配置值收成表单控件能直接写回的 JSON 值。"""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return ','.join(str(item) for item in value)
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _respond_page_action(
+    message,
+    category='info',
+    *,
+    endpoint=None,
+    endpoint_kwargs=None,
+    status=None,
+    extra=None,
+    success=None,
+    navigate=False,
+):
+    """同页操作用 JSON；普通表单提交仍 flash 后重定向。
+
+    navigate=True 表示这次结果本来就要离开当前页（例如登录后进入首页，
+    或编辑页保存并上传后进入人工审核）。此时 AJAX 也会带上 redirect，
+    并先写入 flash，让目标页还能看到原来的提示。
+    """
+    category = category if category in _ACTION_FLASH_CATEGORIES else 'info'
+    if success is None:
+        success = category != 'danger'
+    if status is None:
+        status = 200 if success else 400
+    target = url_for(endpoint, **(endpoint_kwargs or {})) if endpoint else None
+    if _is_ajax_request():
+        payload = {
+            'success': bool(success),
+            'message': message,
+            'category': category,
+        }
+        if extra:
+            for key, value in extra.items():
+                if key not in ('success', 'message', 'category', 'redirect'):
+                    payload[key] = value
+        if navigate and target:
+            flash(message, category)
+            payload['redirect'] = target
+        return jsonify(payload), status
+    flash(message, category)
+    return redirect(target or request.referrer or url_for('index'))
+
+
+def _task_mutation_extra(task_id, *, removed=False) -> dict:
+    extra = {'task_id': task_id, 'removed': bool(removed)}
+    if removed or not _is_ajax_request():
+        return extra
+    try:
+        task = get_task(task_id)
+        if not task:
+            extra['removed'] = True
+            return extra
+        extra.update(_render_task_fragments(task))
+        extra['task_id'] = task_id
+        extra['removed'] = False
+    except Exception:
+        logger.exception("渲染任务片段失败: %s", task_id)
+    return extra
+
+
+def _edit_task_client_state(task: dict) -> dict:
+    """编辑页就地更新所需的状态，不重新渲染整页。"""
+    task_id = str(task.get('id') or '').strip()
+    has_original_cover_backup = False
+    has_cover_preview = False
+    is_custom_cover_active = False
+    current_cover_filename = ''
+    try:
+        task_dir_real = _get_task_dir_real(task_id)
+        has_original_cover_backup = bool(os.path.isdir(task_dir_real) and _find_original_cover_backup(task_dir_real))
+        active_cover_path = _get_current_cover_path(task, task_dir_real) if os.path.isdir(task_dir_real) else ''
+        has_cover_preview = bool(active_cover_path)
+        current_cover_filename = os.path.basename(active_cover_path) if active_cover_path else ''
+        is_custom_cover_active = current_cover_filename.startswith('custom_cover.')
+    except Exception:
+        has_original_cover_backup = False
+        has_cover_preview = bool(task.get('cover_path_local'))
+        is_custom_cover_active = False
+        current_cover_filename = os.path.basename(str(task.get('cover_path_local') or ''))
+
+    if has_original_cover_backup and is_custom_cover_active:
+        cover_hint = '已检测到原始封面备份，可恢复。'
+    elif has_original_cover_backup:
+        cover_hint = '原始封面备份已存在，当前已在使用原始封面。'
+    else:
+        cover_hint = '上传新封面后会自动保留原始封面，之后可随时恢复。'
+
+    can_upload = task.get('status') in [
+        TASK_STATES['COMPLETED'],
+        TASK_STATES['PENDING'],
+        TASK_STATES['READY_FOR_UPLOAD'],
+        TASK_STATES['AWAITING_REVIEW'],
+    ]
+    cover_url = ''
+    if task_id and has_cover_preview:
+        try:
+            cover_url = url_for('get_task_cover', task_id=task_id)
+        except Exception:
+            cover_url = ''
+
+    return {
+        'task_id': task_id,
+        'status': task.get('status'),
+        'status_label': task_status_display(task.get('status')),
+        'status_color': task_status_color(task.get('status')),
+        'can_upload': can_upload,
+        'has_cover_preview': has_cover_preview,
+        'has_original_cover_backup': has_original_cover_backup,
+        'is_custom_cover_active': is_custom_cover_active,
+        'current_cover_filename': current_cover_filename,
+        'cover_hint': cover_hint,
+        'cover_url': cover_url,
+        'error_message': task.get('error_message') or '',
+    }
+
+
 def _extract_settings_uploads(files_storage) -> dict:
     uploads = {}
     for field_name in ('youtube_cookies_file', 'acfun_cookies_file', 'bilibili_cookies_file'):
@@ -2238,11 +2368,13 @@ def _runtime_gate_status() -> dict:
         }
 
 
-def _gate_redirect():
-    target = str(request.form.get('next') or '').strip()
-    if target == 'tasks':
-        return redirect(url_for('tasks'))
-    return redirect(url_for('index'))
+def _gate_page_endpoint():
+    return 'tasks' if str(request.form.get('next') or '').strip() == 'tasks' else 'index'
+
+
+def _finish_gate_action(message, category):
+    """有脚本时返回 JSON，由同页逻辑提示并刷新；没有脚本时仍整页跳回。"""
+    return _respond_page_action(message, category, endpoint=_gate_page_endpoint())
 
 
 @app.route('/downloads/pause', methods=['POST'])
@@ -2250,8 +2382,10 @@ def _gate_redirect():
 def pause_downloads_route():
     from modules.pipeline.gates import pause_downloads
     pause_downloads()
-    flash('已暂停下载。正在编码或上传的任务会继续，手动暂停不会自动恢复。', 'info')
-    return _gate_redirect()
+    return _finish_gate_action(
+        '已暂停下载。正在编码或上传的任务会继续，手动暂停不会自动恢复。',
+        'info',
+    )
 
 
 @app.route('/downloads/resume', methods=['POST'])
@@ -2262,11 +2396,12 @@ def resume_downloads_route():
     resume_downloads()
     status = public_status()
     if status.get('downloads_blocked'):
-        flash('已取消手动暂停。下载仍被其他闸门拦住：' + (status.get('download_message') or ''), 'warning')
-    else:
-        kick_pending_downloads_if_running()
-        flash('已恢复下载。', 'success')
-    return _gate_redirect()
+        return _finish_gate_action(
+            '已取消手动暂停。下载仍被其他闸门拦住：' + (status.get('download_message') or ''),
+            'warning',
+        )
+    kick_pending_downloads_if_running()
+    return _finish_gate_action('已恢复下载。', 'success')
 
 
 @app.route('/downloads/bot/resume', methods=['POST'])
@@ -2277,11 +2412,12 @@ def bot_circuit_resume_route():
     skip_bot_wait()
     status = public_status()
     if status.get('downloads_blocked'):
-        flash('已跳过本次熔断等待。下载仍被其他闸门拦住：' + (status.get('download_message') or ''), 'warning')
-    else:
-        kick_pending_downloads_if_running()
-        flash('已跳过本次熔断等待，将立即试探一次下载。退避次数仍保留。', 'success')
-    return _gate_redirect()
+        return _finish_gate_action(
+            '已跳过本次熔断等待。下载仍被其他闸门拦住：' + (status.get('download_message') or ''),
+            'warning',
+        )
+    kick_pending_downloads_if_running()
+    return _finish_gate_action('已跳过本次熔断等待，将立即试探一次下载。退避次数仍保留。', 'success')
 
 
 @app.route('/downloads/bot/reset', methods=['POST'])
@@ -2292,11 +2428,12 @@ def bot_circuit_reset_route():
     reset_bot_circuit()
     status = public_status()
     if status.get('downloads_blocked'):
-        flash('已重置 YouTube 熔断计数。下载仍被其他闸门拦住：' + (status.get('download_message') or ''), 'warning')
-    else:
-        kick_pending_downloads_if_running()
-        flash('已重置 YouTube 熔断，退避次数已清零。', 'success')
-    return _gate_redirect()
+        return _finish_gate_action(
+            '已重置 YouTube 熔断计数。下载仍被其他闸门拦住：' + (status.get('download_message') or ''),
+            'warning',
+        )
+    kick_pending_downloads_if_running()
+    return _finish_gate_action('已重置 YouTube 熔断，退避次数已清零。', 'success')
 
 
 def _render_task_fragments(task: dict, config: dict | None = None) -> dict:
@@ -2446,26 +2583,38 @@ def edit_task(task_id):
         # 主表单的隐藏字段已改名 default_action（避免与上传按钮的同名 action 冲突）。
         # 多值同名 action 时显式优先匹配 force_upload（而非取 DOM 顺序第一个）。
         action = _resolve_edit_task_action(request.form)
-        redirect_target = url_for('edit_task', task_id=task_id)
+
+        def finish_edit(message, category, *, endpoint='edit_task', endpoint_kwargs=None, navigate=False, success=None):
+            kwargs = {'task_id': task_id} if endpoint == 'edit_task' and endpoint_kwargs is None else endpoint_kwargs
+            extra = None
+            if _is_ajax_request() and not navigate:
+                extra = _edit_task_client_state(get_task(task_id) or task)
+            return _respond_page_action(
+                message,
+                category,
+                endpoint=endpoint,
+                endpoint_kwargs=kwargs,
+                navigate=navigate,
+                success=success,
+                extra=extra,
+            )
 
         if action == 'replace_cover':
             try:
                 cover_file = request.files.get('cover_file')
                 _replace_task_cover(task, cover_file)
-                flash('任务封面已更新。', 'success')
+                return finish_edit('任务封面已更新。', 'success')
             except Exception as e:
                 logger.warning(f"替换任务 {task_id} 封面失败: {e}")
-                flash(f'更换封面失败: {e}', 'danger')
-            return redirect(redirect_target)
+                return finish_edit(f'更换封面失败: {e}', 'danger', success=False)
 
         if action == 'restore_cover':
             try:
                 _restore_task_cover(task)
-                flash('已恢复原始封面。', 'success')
+                return finish_edit('已恢复原始封面。', 'success')
             except Exception as e:
                 logger.warning(f"恢复任务 {task_id} 原始封面失败: {e}")
-                flash(f'恢复原封面失败: {e}', 'danger')
-            return redirect(redirect_target)
+                return finish_edit(f'恢复原封面失败: {e}', 'danger', success=False)
 
         upload_target = str(task.get('upload_target') or 'acfun').lower()
         # 处理表单提交
@@ -2530,19 +2679,23 @@ def edit_task(task_id):
             platform_name = '双平台' if upload_target == 'both' else ('bilibili' if upload_target == 'bilibili' else 'AcFun')
             missing_partitions = _missing_upload_partition_labels(updated_task or task, config)
             if missing_partitions:
-                flash(f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。', 'danger')
-                return redirect(redirect_target)
+                return finish_edit(
+                    f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。',
+                    'danger',
+                    success=False,
+                )
 
             _start_background_force_upload(task_id, config, platform_name)
-            flash(f'已保存当前修改，并启动强制上传到{platform_name}，正在后台处理...', 'info')
-            return redirect(url_for('manual_review'))
+            return finish_edit(
+                f'已保存当前修改，并启动强制上传到{platform_name}，正在后台处理...',
+                'info',
+                endpoint='manual_review',
+                navigate=True,
+            )
 
         if updated_task and updated_task['status'] == TASK_STATES['READY_FOR_UPLOAD']:
-            flash('任务已保存，当前可单独执行上传。', 'success')
-        else:
-            flash('任务已保存。', 'success')
-
-        return redirect(redirect_target)
+            return finish_edit('任务已保存，当前可单独执行上传。', 'success')
+        return finish_edit('任务已保存。', 'success')
     
     # GET请求，显示编辑页面
     # 封面图片现在直接从downloads目录提供
@@ -2562,29 +2715,13 @@ def edit_task(task_id):
     
     # 获取当前配置
     config = load_config()
-    can_upload = task['status'] in [
-        TASK_STATES['COMPLETED'],
-        TASK_STATES['PENDING'],
-        TASK_STATES['READY_FOR_UPLOAD'],
-        TASK_STATES['AWAITING_REVIEW']
-    ]
-    has_original_cover_backup = False
-    has_cover_preview = False
-    is_custom_cover_active = False
-    current_cover_filename = ''
-    try:
-        task_dir_real = _get_task_dir_real(task_id)
-        has_original_cover_backup = bool(os.path.isdir(task_dir_real) and _find_original_cover_backup(task_dir_real))
-        active_cover_path = _get_current_cover_path(task, task_dir_real) if os.path.isdir(task_dir_real) else ''
-        has_cover_preview = bool(active_cover_path)
-        current_cover_filename = os.path.basename(active_cover_path) if active_cover_path else ''
-        is_custom_cover_active = current_cover_filename.startswith('custom_cover.')
-    except Exception:
-        has_original_cover_backup = False
-        has_cover_preview = bool(task.get('cover_path_local'))
-        is_custom_cover_active = False
-        current_cover_filename = os.path.basename(str(task.get('cover_path_local') or ''))
-    
+    cover_state = _edit_task_client_state(task)
+    can_upload = cover_state['can_upload']
+    has_original_cover_backup = cover_state['has_original_cover_backup']
+    has_cover_preview = cover_state['has_cover_preview']
+    is_custom_cover_active = cover_state['is_custom_cover_active']
+    current_cover_filename = cover_state['current_cover_filename']
+
     return render_template(
         'edit_task.html', 
         task=task, 
@@ -2722,14 +2859,15 @@ def add_task_route():
     """添加新任务，支持播放列表批量添加"""
     youtube_url = request.form.get('youtube_url')
     upload_target = request.form.get('upload_target')
-    
+
+    def finish(message, category, **kwargs):
+        return _respond_page_action(message, category, endpoint='tasks', **kwargs)
+
     if not youtube_url:
-        flash('YouTube URL不能为空', 'danger')
-        return redirect(url_for('tasks'))
+        return finish('YouTube URL不能为空', 'danger', success=False)
     valid_url, url_error = validate_youtube_submission_url(youtube_url)
     if not valid_url:
-        flash(url_error, 'danger')
-        return redirect(url_for('tasks'))
+        return finish(url_error, 'danger', success=False)
 
     config = load_config()
     if not upload_target:
@@ -2741,27 +2879,26 @@ def add_task_route():
         cookies_path = config.get('YOUTUBE_COOKIES_PATH')
         video_urls = extract_video_urls_from_playlist(youtube_url, cookies_path)
         if not video_urls:
-            flash('未能提取到播放列表中的视频', 'danger')
-            return redirect(url_for('tasks'))
+            return finish('未能提取到播放列表中的视频', 'danger', success=False)
         added_count = 0
         for url in video_urls:
             task_id = add_task(url, upload_target=upload_target)
             if task_id:
                 added_count += 1
-        flash(f'已批量添加 {added_count} 个视频任务（来自播放列表）', 'success')
-        return redirect(url_for('tasks'))
+        return finish(f'已批量添加 {added_count} 个视频任务（来自播放列表）', 'success', extra={'count': added_count})
     else:
         task_id = add_task(youtube_url, upload_target=upload_target)
         if task_id:
             if config.get('AUTO_MODE_ENABLED', False):
                 logger.info(f"自动模式已启用，立即开始处理任务 {task_id}")
                 start_task(task_id, config)
-                flash(f'任务已添加并开始处理: {youtube_url}', 'success')
-            else:
-                flash(f'任务已添加: {youtube_url}', 'success')
-        else:
-            flash(f'添加任务失败: {youtube_url}', 'danger')
-        return redirect(url_for('tasks'))
+                return finish(
+                    f'任务已添加并开始处理: {youtube_url}',
+                    'success',
+                    extra=_task_mutation_extra(task_id),
+                )
+            return finish(f'任务已添加: {youtube_url}', 'success', extra=_task_mutation_extra(task_id))
+        return finish(f'添加任务失败: {youtube_url}', 'danger', success=False)
 
 @app.route('/tasks/<task_id>/start', methods=['POST'])
 @login_required
@@ -2770,12 +2907,16 @@ def start_task_route(task_id):
     task = get_task(task_id)
     
     if not task:
-        flash('任务不存在', 'danger')
-        return redirect(url_for('tasks'))
+        return _respond_page_action('任务不存在', 'danger', endpoint='tasks', success=False)
     
     if task['status'] not in [TASK_STATES['PENDING'], TASK_STATES['FAILED']]:
-        flash(f'当前任务状态为 {task_status_display(task["status"])}，不能启动', 'warning')
-        return redirect(url_for('tasks'))
+        return _respond_page_action(
+            f'当前任务状态为 {task_status_display(task["status"])}，不能启动',
+            'warning',
+            endpoint='tasks',
+            success=False,
+            extra={'task_id': task_id},
+        )
     
     # 获取当前配置
     config = load_config()
@@ -2786,15 +2927,23 @@ def start_task_route(task_id):
     if success:
         # 检查是否是自动模式
         if config.get('AUTO_MODE_ENABLED', False):
-            flash('任务已启动，自动模式将会自动完成下载、处理和上传', 'info')
-            
-            # 使用传统页面刷新方式
+            message, category = '任务已启动，自动模式将会自动完成下载、处理和上传', 'info'
         else:
-            flash('任务处理已启动', 'success')
-    else:
-        flash('启动任务处理失败', 'danger')
-    
-    return redirect(url_for('tasks'))
+            message, category = '任务处理已启动', 'success'
+        return _respond_page_action(
+            message,
+            category,
+            endpoint='tasks',
+            extra=_task_mutation_extra(task_id),
+        )
+
+    return _respond_page_action(
+        '启动任务处理失败',
+        'danger',
+        endpoint='tasks',
+        success=False,
+        extra={'task_id': task_id},
+    )
 
 @app.route('/tasks/<task_id>/delete', methods=['POST'])
 @login_required
@@ -2805,11 +2954,19 @@ def delete_task_route(task_id):
     success = delete_task(task_id, delete_files)
     
     if success:
-        flash('任务已删除', 'success')
-    else:
-        flash('删除任务失败', 'danger')
-    
-    return redirect(url_for('tasks'))
+        return _respond_page_action(
+            '任务已删除',
+            'success',
+            endpoint='tasks',
+            extra={'task_id': task_id, 'removed': True},
+        )
+    return _respond_page_action(
+        '删除任务失败',
+        'danger',
+        endpoint='tasks',
+        success=False,
+        extra={'task_id': task_id},
+    )
 
 
 @app.route('/tasks/clear_all', methods=['POST'])
@@ -2820,13 +2977,11 @@ def clear_all_tasks_route():
         delete_files = request.form.get('delete_files', 'true').lower() in ['true', '1', 'on']
         success = clear_all_tasks(delete_files=delete_files)
         if success:
-            flash('所有任务已清空', 'success')
-        else:
-            flash('清空任务失败，请查看日志', 'danger')
+            return _respond_page_action('所有任务已清空', 'success', endpoint='tasks', extra={'cleared': True})
+        return _respond_page_action('清空任务失败，请查看日志', 'danger', endpoint='tasks', success=False)
     except Exception as e:
         logger.error(f"清空所有任务失败: {e}")
-        flash(f'清空任务失败: {e}', 'danger')
-    return redirect(url_for('tasks'))
+        return _respond_page_action(f'清空任务失败: {e}', 'danger', endpoint='tasks', success=False)
 
 
 @app.route('/tasks/retry_failed', methods=['POST'])
@@ -2840,13 +2995,16 @@ def retry_failed_tasks_route():
         if isinstance(result, dict):
             scheduled = result.get('scheduled', 0)
             total = result.get('total', 0)
-            flash(f'已重新调度 {scheduled}/{total} 个失败任务', 'success')
-        else:
-            flash('重新调度失败，请查看日志', 'danger')
+            return _respond_page_action(
+                f'已重新调度 {scheduled}/{total} 个失败任务',
+                'success',
+                endpoint='tasks',
+                extra={'scheduled': scheduled, 'total': total},
+            )
+        return _respond_page_action('重新调度失败，请查看日志', 'danger', endpoint='tasks', success=False)
     except Exception as e:
         logger.error(f"重试失败任务失败: {e}")
-        flash(f'重试失败任务失败: {e}', 'danger')
-    return redirect(url_for('tasks'))
+        return _respond_page_action(f'重试失败任务失败: {e}', 'danger', endpoint='tasks', success=False)
 
 
 @app.route('/tasks/<task_id>/retry_translation', methods=['POST'])
@@ -2855,29 +3013,52 @@ def retry_metadata_translation_route(task_id):
     """重新执行因自动翻译失败而暂停的任务。"""
     task = get_task(task_id)
     if not task:
-        flash('任务不存在', 'danger')
-        return redirect(url_for('manual_review'))
+        return _respond_page_action('任务不存在', 'danger', endpoint='manual_review', success=False, extra={'task_id': task_id})
 
     if not is_metadata_translation_retryable(task):
-        flash('当前任务不是可重试的自动翻译失败任务', 'warning')
-        return redirect(url_for('manual_review'))
+        return _respond_page_action(
+            '当前任务不是可重试的自动翻译失败任务',
+            'warning',
+            endpoint='manual_review',
+            success=False,
+            extra={'task_id': task_id},
+        )
 
     config = load_config()
     retry_block_reason = get_metadata_translation_retry_block_reason(task, config)
     if retry_block_reason:
-        flash(retry_block_reason, 'warning')
-        return redirect(url_for('manual_review'))
+        return _respond_page_action(
+            retry_block_reason,
+            'warning',
+            endpoint='manual_review',
+            success=False,
+            extra={'task_id': task_id},
+        )
 
     try:
         if retry_metadata_translation_task(task_id, config):
-            flash('已重新启动自动翻译，任务将在后台继续处理', 'success')
-        else:
-            flash('重新启动自动翻译失败，请稍后重试', 'danger')
+            return _respond_page_action(
+                '已重新启动自动翻译，任务将在后台继续处理',
+                'success',
+                endpoint='manual_review',
+                extra={'task_id': task_id, 'removed': True},
+            )
+        return _respond_page_action(
+            '重新启动自动翻译失败，请稍后重试',
+            'danger',
+            endpoint='manual_review',
+            success=False,
+            extra={'task_id': task_id},
+        )
     except Exception as exc:
         logger.error(f"重试任务 {task_id} 的自动翻译失败: {exc}")
-        flash('重新启动自动翻译失败，请查看日志', 'danger')
-
-    return redirect(url_for('manual_review'))
+        return _respond_page_action(
+            '重新启动自动翻译失败，请查看日志',
+            'danger',
+            endpoint='manual_review',
+            success=False,
+            extra={'task_id': task_id},
+        )
 
 @app.route('/tasks/<task_id>/force_upload', methods=['POST'])
 @login_required
@@ -2886,8 +3067,7 @@ def force_upload_task_route(task_id):
     task = get_task(task_id)
     
     if not task:
-        flash('任务不存在', 'danger')
-        return redirect(url_for('manual_review'))
+        return _respond_page_action('任务不存在', 'danger', endpoint='manual_review', success=False, extra={'task_id': task_id})
     
     # 获取当前配置
     config = load_config()
@@ -2895,15 +3075,24 @@ def force_upload_task_route(task_id):
     platform_name = '双平台' if upload_target == 'both' else ('bilibili' if upload_target == 'bilibili' else 'AcFun')
     missing_partitions = _missing_upload_partition_labels(task, config)
     if missing_partitions:
-        flash(f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。', 'danger')
-        return redirect(url_for('edit_task', task_id=task_id))
+        return _respond_page_action(
+            f'请先选择{ "、".join(missing_partitions) }，或开启分区推荐后再继续上传。',
+            'danger',
+            endpoint='edit_task',
+            endpoint_kwargs={'task_id': task_id},
+            success=False,
+            navigate=True,
+        )
     
-    # 启动后台强制上传
-    flash(f'已启动强制上传到{platform_name}，正在后台处理...', 'info')
-
+    # 启动后台强制上传。未分区时才离开当前页去编辑；启动本身留在原页面。
     _start_background_force_upload(task_id, config, platform_name)
 
-    return redirect(url_for('manual_review'))
+    return _respond_page_action(
+        f'已启动强制上传到{platform_name}，正在后台处理...',
+        'info',
+        endpoint='manual_review',
+        extra=_task_mutation_extra(task_id),
+    )
 
 @app.route('/tasks/reset_stuck', methods=['POST'])
 @login_required
@@ -2914,14 +3103,16 @@ def reset_stuck_tasks_route():
     try:
         reset_count = reset_stuck_tasks()
         if reset_count > 0:
-            flash(f'已重置 {reset_count} 个卡住的任务', 'success')
-        else:
-            flash('没有发现卡住的任务', 'info')
+            return _respond_page_action(
+                f'已重置 {reset_count} 个卡住的任务',
+                'success',
+                endpoint='tasks',
+                extra={'reset_count': reset_count},
+            )
+        return _respond_page_action('没有发现卡住的任务', 'info', endpoint='tasks', extra={'reset_count': 0})
     except Exception as e:
         logger.error(f"重置卡住任务失败: {str(e)}")
-        flash('重置卡住任务失败', 'danger')
-    
-    return redirect(url_for('tasks'))
+        return _respond_page_action('重置卡住任务失败', 'danger', endpoint='tasks', success=False)
 
 def _schedule_cancelled_task_file_cleanup(task_id, timeout_seconds=300):
     """等待取消的 worker 退出后清理任务文件，超时则保守保留。"""
@@ -2953,14 +3144,12 @@ def abandon_task_route(task_id):
     delete_files = request.form.get('delete_files', 'true').lower() in ('true', 'yes', '1', 'on')
     task = get_task(task_id)
     if not task:
-        flash('任务不存在', 'danger')
-        return redirect(url_for('tasks'))
+        return _respond_page_action('任务不存在', 'danger', endpoint='tasks', success=False, extra={'task_id': task_id})
 
     request_task_cancel(task_id)
     active = _is_task_active(task_id)
     if not update_task(task_id, status=TASK_STATES['FAILED'], error_message="用户主动放弃任务"):
-        flash('放弃任务失败，请稍后重试', 'danger')
-        return redirect(url_for('tasks'))
+        return _respond_page_action('放弃任务失败，请稍后重试', 'danger', endpoint='tasks', success=False, extra={'task_id': task_id})
 
     files_skipped = False
     if delete_files and not active:
@@ -2971,10 +3160,12 @@ def abandon_task_route(task_id):
         files_skipped = True
 
     if files_skipped:
-        flash('任务已废弃；检测到任务仍在运行，下载文件将在任务停止后清理。', 'warning')
+        message, category = '任务已废弃；检测到任务仍在运行，下载文件将在任务停止后清理。', 'warning'
     else:
-        flash('任务已废弃', 'success')
-    return redirect(url_for('tasks'))
+        message, category = '任务已废弃', 'success'
+    extra = _task_mutation_extra(task_id)
+    extra['removed'] = True
+    return _respond_page_action(message, category, endpoint='tasks', extra=extra)
 
 # 系统健康检查辅助函数
 
@@ -3835,15 +4026,23 @@ def reset_settings():
         keys = data.get('keys', [])
         
         if keys:
-            # 重置指定项
-            reset_specific_config(keys)
-            flash('当前页面的设置已重置为默认值。', 'success')
+            # 重置指定项。直接返回新值，页面就地写回控件，不再整页刷新。
+            updated = reset_specific_config(keys)
+            values = {}
+            for key in keys:
+                if key in DEFAULT_CONFIG:
+                    values[key] = _settings_form_value(updated.get(key, DEFAULT_CONFIG.get(key)))
         else:
             # 如果未指定keys，则不执行任何操作或返回错误
             # 为了防止误操作全重置，这里要求必须指定keys
-            return jsonify({'status': 'error', 'message': '未指定要重置的配置项'}), 400
-            
-        return jsonify({'status': 'success', 'message': '设置已重置'})
+            return jsonify({'status': 'error', 'success': False, 'message': '未指定要重置的配置项'}), 400
+
+        return jsonify({
+            'status': 'success',
+            'success': True,
+            'message': '当前页面的设置已重置为默认值。',
+            'values': values,
+        })
     except Exception as e:
         logger.error(f"重置设置失败: {str(e)}")
         return jsonify({'status': 'error', 'message': '重置设置失败，请稍后重试'}), 500
@@ -3858,11 +4057,17 @@ def cleanup_logs_route():
     result = cleanup_logs(hours)
     
     if result.get('success'):
-        flash(f"日志清理成功，删除了{result['files_removed']}个文件，释放了{result['bytes_freed_readable']}空间", 'success')
-    else:
-        flash(f"日志清理失败: {result.get('error', '未知错误')}", 'danger')
-    
-    return redirect(url_for('settings'))
+        return _respond_page_action(
+            f"日志清理成功，删除了{result['files_removed']}个文件，释放了{result['bytes_freed_readable']}空间",
+            'success',
+            endpoint='settings',
+        )
+    return _respond_page_action(
+        f"日志清理失败: {result.get('error', '未知错误')}",
+        'danger',
+        endpoint='settings',
+        success=False,
+    )
 
 @app.route('/maintenance/clear_logs', methods=['POST'])
 @login_required
@@ -3872,11 +4077,17 @@ def clear_logs_route():
     
     if result.get('success'):
         processed_files_str = "、".join(result['processed_files'])
-        flash(f"日志清理成功，已处理{result['files_processed']}个文件（{processed_files_str}），释放了{result['bytes_freed_readable']}空间", 'success')
-    else:
-        flash(f"日志清理失败: {result.get('error', '未知错误')}", 'danger')
-    
-    return redirect(url_for('settings'))
+        return _respond_page_action(
+            f"日志清理成功，已处理{result['files_processed']}个文件（{processed_files_str}），释放了{result['bytes_freed_readable']}空间",
+            'success',
+            endpoint='settings',
+        )
+    return _respond_page_action(
+        f"日志清理失败: {result.get('error', '未知错误')}",
+        'danger',
+        endpoint='settings',
+        success=False,
+    )
 
 @app.route('/maintenance/cleanup_downloads', methods=['POST'])
 @login_required
@@ -3888,11 +4099,17 @@ def cleanup_downloads_route():
     result = cleanup_downloads(hours)
     
     if result.get('success'):
-        flash(f"下载内容清理成功，删除了{result['dirs_removed']}个目录、{result['files_removed']}个文件，释放了{result['bytes_freed_readable']}空间", 'success')
-    else:
-        flash(f"下载内容清理失败: {result.get('error', '未知错误')}", 'danger')
-    
-    return redirect(url_for('settings'))
+        return _respond_page_action(
+            f"下载内容清理成功，删除了{result['dirs_removed']}个目录、{result['files_removed']}个文件，释放了{result['bytes_freed_readable']}空间",
+            'success',
+            endpoint='settings',
+        )
+    return _respond_page_action(
+        f"下载内容清理失败: {result.get('error', '未知错误')}",
+        'danger',
+        endpoint='settings',
+        success=False,
+    )
 
 
 def _human_readable_size(num_bytes: float) -> str:
@@ -4420,13 +4637,20 @@ def youtube_monitor_config_delete(config_id):
         config = youtube_monitor.get_monitor_config(config_id)
         if config:
             youtube_monitor.delete_monitor_config(config_id)
-            flash(f'监控配置 "{config["name"]}" 删除成功！', 'success')
-        else:
-            flash('监控配置不存在', 'danger')
+            return _respond_page_action(
+                f'监控配置 "{config["name"]}" 删除成功！',
+                'success',
+                endpoint='youtube_monitor_index',
+                extra={'config_id': config_id, 'removed': True},
+            )
+        return _respond_page_action('监控配置不存在', 'danger', endpoint='youtube_monitor_index', success=False)
     except Exception as e:
-        flash(f'删除监控配置失败: {str(e)}', 'danger')
-    
-    return redirect(url_for('youtube_monitor_index'))
+        return _respond_page_action(
+            f'删除监控配置失败: {str(e)}',
+            'danger',
+            endpoint='youtube_monitor_index',
+            success=False,
+        )
 
 @app.route('/youtube_monitor/config/<int:config_id>/run', methods=['POST'])
 @login_required
@@ -4545,32 +4769,38 @@ def youtube_monitor_add_to_tasks():
 def youtube_monitor_clear_history(config_id):
     """清空指定监控任务的历史记录"""
     youtube_monitor.clear_monitor_history(config_id)
-    
-    return redirect(url_for('youtube_monitor_index'))
+    return _respond_page_action(
+        '已清除该配置的历史记录',
+        'success',
+        endpoint='youtube_monitor_index',
+        extra={'config_id': config_id, 'cleared': True},
+    )
 
 @app.route('/youtube_monitor/history/clear_all', methods=['POST'])
 @login_required
 def youtube_monitor_clear_all_history():
     """清空所有历史记录"""
     youtube_monitor.clear_all_monitor_history()
-    
-    return redirect(url_for('youtube_monitor_index'))
+    return _respond_page_action('已清除全部监控历史记录', 'success', endpoint='youtube_monitor_index', extra={'cleared': True})
 
 @app.route('/youtube_monitor/restore_configs', methods=['POST'])
 @login_required
 def youtube_monitor_restore_configs():
     """恢复默认监控配置"""
     youtube_monitor.restore_configs_from_files_manually()
-    
-    return redirect(url_for('youtube_monitor_index'))
+    return _respond_page_action('监控配置已从文件恢复', 'success', endpoint='youtube_monitor_index')
 
 @app.route('/youtube_monitor/config/<int:config_id>/reset_offset', methods=['POST'])
 @login_required
 def youtube_monitor_reset_offset(config_id):
     """重置频道监控的视频偏移量"""
     youtube_monitor.reset_historical_offset(config_id)
-    
-    return redirect(url_for('youtube_monitor_index'))
+    return _respond_page_action(
+        '已重置该监控的历史偏移',
+        'success',
+        endpoint='youtube_monitor_index',
+        extra={'config_id': config_id},
+    )
 
 @app.route('/api/cookies/sync', methods=['POST'])
 @login_required

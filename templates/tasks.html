@@ -6,6 +6,7 @@
 <div class="tasks-container"
      data-tasks-stream="{{ url_for('tasks_event_stream') }}"
      data-task-fragment-template="{{ url_for('task_fragment', task_id='__TASK_ID__') }}">
+    <div id="tasksContent">
     {% set failed_tasks = tasks|selectattr('status', 'equalto', 'failed')|list if tasks else [] %}
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
         <div class="d-flex align-items-center gap-2">
@@ -35,7 +36,6 @@
     {% set next_page = 'tasks' %}
     {% include 'partials/runtime_gates_banner.html' %}
 
-    <div id="tasksContent">
     {% if tasks %}
     <div class="modern-list">
         <!-- 桌面端表格（md及以上显示） -->
@@ -149,7 +149,7 @@
                 <h5 class="modal-title"><i class="bi bi-plus-circle"></i> 新建任务</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
             </div>
-            <form method="post" action="{{ url_for('add_task_route') }}">
+            <form method="post" action="{{ url_for('add_task_route') }}" data-same-page="refresh-tasks" data-close-modal="addTaskModal">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="youtube_url" class="form-label">YouTube视频URL</label>
@@ -202,7 +202,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="bi bi-x-circle"></i> 取消
                 </button>
-                <form id="deleteTaskForm" method="post" action="">
+                <form id="deleteTaskForm" method="post" action="" data-same-page="refresh-tasks" data-close-modal="deleteTaskModal">
                     <input type="hidden" name="delete_files" id="deleteFilesInput" value="true">
                     <button type="submit" class="btn btn-danger">
                         <i class="bi bi-trash"></i> 删除
@@ -235,7 +235,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="bi bi-x-circle"></i> 取消
                 </button>
-                <form id="clearAllTasksForm" method="post" action="{{ url_for('clear_all_tasks_route') }}">
+                <form id="clearAllTasksForm" method="post" action="{{ url_for('clear_all_tasks_route') }}" data-same-page="refresh-tasks" data-close-modal="clearAllTasksModal">
                     <input type="hidden" name="delete_files" id="clearAllFilesInput" value="true">
                     <button type="submit" class="btn btn-danger">
                         <i class="bi bi-trash"></i> 确认清除
@@ -262,7 +262,7 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                     <i class="bi bi-x-circle"></i> 取消
                 </button>
-                <form method="post" action="{{ url_for('retry_failed_tasks_route') }}">
+                <form method="post" action="{{ url_for('retry_failed_tasks_route') }}" data-same-page="refresh-tasks" data-close-modal="retryFailedTasksModal">
                     <button type="submit" class="btn btn-outline-danger">
                         <i class="bi bi-arrow-repeat"></i> 确认重试
                     </button>
@@ -1173,6 +1173,53 @@ tr.status-awaiting_manual_review td { background-color: rgba(255,193,7,0.05); }
             refreshTasksData();
         }, delay);
     }
+
+    function removeTaskElements(taskId) {
+        if (!taskId) return;
+        const escapedTaskId = escapeTaskIdForSelector(taskId);
+        document.querySelectorAll('tr[data-task-id="' + escapedTaskId + '"], .task-card[data-task-id="' + escapedTaskId + '"]').forEach(function(element) {
+            element.remove();
+        });
+    }
+
+    function refreshTasksDataSoon() {
+        if (refreshInProgress) {
+            setTimeout(refreshTasksDataSoon, 250);
+            return;
+        }
+        refreshTasksData(true);
+    }
+
+    window.y2bSamePageHandlers = window.y2bSamePageHandlers || {};
+    window.y2bSamePageHandlers['refresh-tasks'] = function(form, data) {
+        if (data && data.success) {
+            const urlInput = document.getElementById('youtube_url');
+            if (urlInput && form && form.contains(urlInput)) {
+                urlInput.value = '';
+            }
+        }
+        if (data && data.removed && data.task_id) {
+            removeTaskElements(data.task_id);
+        }
+        refreshTasksDataSoon();
+    };
+    window.y2bSamePageHandlers['refresh-task'] = function(form, data) {
+        const taskId = (data && data.task_id) || (form && form.getAttribute('data-task-id'));
+        if (data && data.removed && taskId) {
+            removeTaskElements(taskId);
+            refreshTasksDataSoon();
+            return;
+        }
+        if (taskId && data && (typeof data.row_html === 'string' || typeof data.card_html === 'string')) {
+            const replaced = replaceTaskFragments(taskId, data);
+            if (replaced) return;
+        }
+        if (taskId) {
+            refreshTaskFragment(taskId);
+            return;
+        }
+        refreshTasksDataSoon();
+    };
 
     document.addEventListener('DOMContentLoaded', function() {
         // 监听交互，减少实时刷新带来的 hover 闪烁/误点
