@@ -13,6 +13,7 @@
     </a>
 </div>
 
+<div id="monitor-history-page">
 <!-- 配置信息摘要 -->
 <div class="card mb-4">
     <div class="card-header">
@@ -111,7 +112,7 @@
             <i class="bi bi-pencil"></i> 编辑配置
         </a>
         {% if history %}
-        <form method="POST" action="{{ url_for('youtube_monitor_clear_history', config_id=config.id) }}" class="d-inline" onsubmit="return confirm('确定要清除该配置的所有历史记录吗？此操作不可恢复！')">
+        <form method="POST" action="{{ url_for('youtube_monitor_clear_history', config_id=config.id) }}" class="d-inline" data-same-page="refresh-region" data-refresh-root="#monitor-history-page" onsubmit="return confirm('确定要清除该配置的所有历史记录吗？此操作不可恢复！')">
             <button type="submit" class="btn btn-danger">
                 <i class="bi bi-trash"></i> 清除历史记录
             </button>
@@ -254,6 +255,7 @@
     </form>
 </div>
 {% endif %}
+</div>
 
 {% endblock %}
 
@@ -322,7 +324,20 @@ function bindMonitorRunForms() {
                         if (payload.success) {
                             button.innerHTML = '<i class="bi bi-check2"></i>';
                             showAlert('success', payload.message || '监控执行完成');
-                            window.setTimeout(() => window.location.reload(), 900);
+                            const refresh = window.y2bRefreshRegions
+                                ? window.y2bRefreshRegions(['#monitor-history-page'])
+                                : Promise.resolve(0);
+                            refresh.then((count) => {
+                                if (!count && document.body.contains(button)) {
+                                    button.disabled = false;
+                                    button.innerHTML = originalHtml;
+                                }
+                            }).catch(() => {
+                                if (document.body.contains(button)) {
+                                    button.disabled = false;
+                                    button.innerHTML = originalHtml;
+                                }
+                            });
                             return;
                         }
 
@@ -393,6 +408,11 @@ function addToTasks(videoId, configId) {
 }
 
 function showAlert(type, message) {
+    if (window.y2bShowToast) {
+        const category = type === 'danger' ? 'danger' : type;
+        window.y2bShowToast(category, message);
+        return;
+    }
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
     alertDiv.innerHTML = `

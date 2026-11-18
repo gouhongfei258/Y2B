@@ -2677,13 +2677,13 @@
         </div>
     </div>
 
-    <form method="post" action="{{ url_for('cleanup_logs_route') }}" class="d-none" id="cleanup-form">
+    <form method="post" action="{{ url_for('cleanup_logs_route') }}" class="d-none" id="cleanup-form" data-same-page="toast">
         <input type="hidden" name="hours" id="cleanup-hours-input" value="{{ config.LOG_CLEANUP_HOURS }}">
     </form>
 
-    <form method="post" action="{{ url_for('clear_logs_route') }}" class="d-none" id="clear-form"></form>
+    <form method="post" action="{{ url_for('clear_logs_route') }}" class="d-none" id="clear-form" data-same-page="toast"></form>
 
-    <form method="post" action="{{ url_for('cleanup_downloads_route') }}" class="d-none" id="download-cleanup-form">
+    <form method="post" action="{{ url_for('cleanup_downloads_route') }}" class="d-none" id="download-cleanup-form" data-same-page="toast">
         <input type="hidden" name="hours" id="download-cleanup-hours-input" value="{{ config.get('DOWNLOAD_CLEANUP_HOURS', 72) }}">
     </form>
 
@@ -2824,6 +2824,27 @@ document.addEventListener('DOMContentLoaded', function () {
         syncYoutubeQualityFields();
     }
 
+    function applyResetValues(values) {
+        if (!values) return;
+        Object.keys(values).forEach(function (name) {
+            const nodes = document.querySelectorAll('[name="' + settingsEscapeSelector(name) + '"]');
+            const value = values[name];
+            nodes.forEach(function (node) {
+                if (!node || node.type === 'file') return;
+                if (node.type === 'checkbox') {
+                    node.checked = value === true || value === 1 || value === '1' || value === 'true' || value === 'on' || value === 'yes';
+                } else if (node.type === 'radio') {
+                    node.checked = String(node.value) === String(value);
+                } else if (value === null || typeof value === 'undefined') {
+                    node.value = '';
+                } else {
+                    node.value = String(value);
+                }
+                node.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+        });
+    }
+
     // 卡片级重置：设置项按卡片分组后，按整个 tab 重置会误伤提示词等资产，
     // 因此把重置入口下沉到每张卡片，并在确认框中列出将被重置的字段名。
     (function () {
@@ -2871,7 +2892,12 @@ document.addEventListener('DOMContentLoaded', function () {
                     .then(function (response) { return response.json(); })
                     .then(function (data) {
                         if (data.status === 'success') {
-                            window.location.reload();
+                            applyResetValues(data.values);
+                            if (typeof showSettingsToast === 'function') {
+                                showSettingsToast('success', data.message || '当前页面的设置已重置为默认值。');
+                            }
+                        } else if (typeof showSettingsToast === 'function') {
+                            showSettingsToast('error', '重置失败: ' + (data.message || ''));
                         } else {
                             alert('重置失败: ' + data.message);
                         }
