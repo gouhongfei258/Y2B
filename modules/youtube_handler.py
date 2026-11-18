@@ -348,22 +348,116 @@ def _is_format_selection_error(error_text: str | None) -> bool:
     return any(indicator in normalized for indicator in indicators)
 
 
-def _looks_like_youtube_bot_challenge(error_text: str | None) -> bool:
-    """判断是否像是 YouTube 反机器人/登录校验问题。"""
-    if not error_text:
+# 只认明确的人机验证/验证码，以及客户端被限流。单独的 HTTP 403、"player"、
+# 格式选择失败和分片重试都不能算，否则会把普通下载失败打成全局熔断。
+_BOT_CHALLENGE_MARKERS = (
+    "not a bot",
+    "captcha",
+    "unusual traffic",
+    "bot detection",
+    "sign in to confirm you're not a bot",
+    "sign in to confirm you’re not a bot",
+    "confirm that you're not a bot",
+    "confirm that you’re not a bot",
+)
+_HARD_ACCESS_DENIAL_MARKERS = (
+    "http error 429",
+    "too many requests",
+    "rate-limited",
+    "rate limited",
+)
+
+
+def _is_ordinary_fragment_retry(error_text: str) -> bool:
+    lowered = error_text.lower()
+    if "fragment" not in lowered:
         return False
-    normalized = str(error_text)
-    indicators = (
-        "Sign in to confirm",
-        "not a bot",
-        "Signature extraction failed",
-        "Some formats may be missing",
-        "HTTP Error 403",
-        "player",
-        "decodeURIComponent",
-        "The page needs to be reloaded.",
+    return not any(marker in lowered for marker in _BOT_CHALLENGE_MARKERS)
+
+
+def youtube_download_gate_reason(error_text: str | None) -> str | None:
+    """返回应触发下载熔断的原因；不应熔断时返回 None。"""
+    if not error_text:
+        return None
+    if _is_format_selection_error(error_text):
+        return None
+    text = str(error_text)
+    if _is_ordinary_fragment_retry(text):
+        return None
+    lowered = text.lower()
+    if any(marker in lowered for marker in _BOT_CHALLENGE_MARKERS):
+        return "YouTube 人机验证/验证码"
+    if any(marker in lowered for marker in _HARD_ACCESS_DENIAL_MARKERS):
+        return "YouTube 拒绝访问（频率限制）"
+    return None
+
+
+def _looks_like_youtube_bot_challenge(error_text: str | None) -> bool:
+    """判断是否为已确认的 YouTube 人机验证，或应熔断的硬性访问拒绝。"""
+    return youtube_download_gate_reason(error_text) is not None
+
+
+def import_pasted_youtube_cookies(text: str, output_path: str) -> dict[str, Any]:
+    """把粘贴的 Cookie 写成 Netscape 文件，并检查是否像完整登录。
+
+    不记录、不返回原始 Cookie 值。
+    """
+    from modules.tools.convert_cookies import cookies_export_to_netscape_text
+
+    netscape = cookies_export_to_netscape_text(text or "")
+    if not netscape:
+        return {
+            "ok": False,
+            "authenticated": False,
+            "count": 0,
+            "message": (
+                "无法识别粘贴的 Cookie，文件未改动。"
+                "支持 Netscape、Cookie-Editor / EditThisCookie JSON，以及 name=value; name2=value2。"
+            ),
+        }
+
+    directory = os.path.dirname(output_path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(netscape)
+        os.replace(tmp_path, output_path)
+    except Exception:
+        logger.warning("写入 YouTube Cookies 文件失败")
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        return {
+            "ok": False,
+            "authenticated": False,
+            "count": 0,
+            "message": "写入 YouTube Cookies 文件失败，请检查路径是否位于项目目录内。",
+        }
+
+    authenticated, _reason = _youtube_cookies_look_authenticated(output_path)
+    count = sum(1 for line in netscape.splitlines() if line.strip() and not line.strip().startswith("#"))
+    logger.info(
+        "已从粘贴内容更新 YouTube Cookies，共 %s 条，登录态%s",
+        count,
+        "完整" if authenticated else "不完整",
     )
-    return any(indicator in normalized for indicator in indicators)
+    if authenticated:
+        message = f"YouTube Cookies 已写入，共 {count} 条，登录态看起来完整。"
+    else:
+        message = (
+            "YouTube Cookies 已写入，但缺少登录关键字段，看起来不是完整登录。"
+            "浏览器地址栏的 document.cookie 拿不到 HttpOnly 登录 Cookie，"
+            "会员专享视频请用浏览器扩展导出。"
+        )
+    return {
+        "ok": True,
+        "authenticated": authenticated,
+        "count": count,
+        "message": message,
+    }
 
 
 def _summarize_yt_dlp_error(stdout_text: str | None, stderr_text: str | None) -> str:
@@ -693,6 +787,47 @@ def test_video_availability(youtube_url, yt_dlp_cmd, cookies_path=None, logger=N
 
     return False, None, last_error or "格式检查失败"
 
+class DownloadGateInterrupted(Exception):
+    """下载被手动暂停、磁盘阈值或 YouTube 熔断打断。"""
+
+
+def _current_download_block_message() -> str:
+    """下载前和下载中看一眼闸门。磁盘不足会顺手记入 disk-low。"""
+    from modules.pipeline.gates import describe_download_block, disk_threshold_bytes, poll_disk
+
+    root = get_app_subdir("downloads")
+    try:
+        os.makedirs(root, exist_ok=True)
+        poll_disk(root, disk_threshold_bytes())
+    except Exception:
+        logger.debug("检查下载磁盘闸门失败", exc_info=True)
+    return describe_download_block()
+
+
+def _activate_youtube_download_gate(error_text: str | None, log: logging.Logger) -> str:
+    reason = youtube_download_gate_reason(error_text)
+    if not reason:
+        return ""
+    from modules.pipeline.gates import describe_download_block, trip_youtube_bot_circuit
+
+    trip_youtube_bot_circuit(reason)
+    log.warning("YouTube 下载熔断已触发：%s", reason)
+    return describe_download_block() or reason
+
+
+def _stop_download_process(process: subprocess.Popen | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
 def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_download=False, only_video=False, progress_callback=None, cancel_event=None):
     """
     下载YouTube视频数据
@@ -719,7 +854,13 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
         return False, "YouTube URL未通过安全校验"
     youtube_url = normalized_url
     logger.info(f"开始下载视频: {youtube_url}, 任务ID: {task_id}")
-    
+
+    if not skip_download:
+        blocked = _current_download_block_message()
+        if blocked:
+            logger.info("下载未开始：%s", blocked)
+            return False, blocked
+
     # 创建任务目录
     task_dir = os.path.join(get_app_subdir('downloads'), task_id)
     if os.path.exists(task_dir):
@@ -782,6 +923,10 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                         logger.warning("CookieCloud同步成功但未生成有效的cookie文件")
                 else:
                     logger.warning("CookieCloud同步失败: %s", sync_info)
+                if not available and _looks_like_youtube_bot_challenge(error_msg):
+                    tripped = _activate_youtube_download_gate(error_msg, logger)
+                    logger.error("CookieCloud 刷新后 YouTube 仍拒绝访问，已熔断下载")
+                    return False, tripped or "YouTube 下载已熔断"
             if not available:
                 logger.error("视频不可用或无法访问")
                 return False, "视频不可用或无法访问"
@@ -912,7 +1057,17 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                     # 同上：只记录参数规模，不回显可能含代理凭据的命令内容（CodeQL #87）
                     logger.debug("下载命令已就绪，共 %d 个参数（内容省略以隐藏代理凭据）", len(cmd))
                     
+                    from modules.pipeline.gates import (
+                        describe_download_block,
+                        disk_threshold_bytes,
+                        poll_disk,
+                        register_download_process,
+                        unregister_download_process,
+                    )
                     try:
+                        blocked = _current_download_block_message()
+                        if blocked:
+                            raise DownloadGateInterrupted(blocked)
                         process = subprocess.Popen(
                             cmd,
                             stdout=subprocess.PIPE,
@@ -923,7 +1078,10 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                             encoding='utf-8',
                             errors='replace'  # 遇到无法解码的字符时用?替换
                         )
+                        register_download_process(process)
                         logger.info(f"subprocess.Popen创建成功，PID: {process.pid}")
+                    except DownloadGateInterrupted:
+                        raise
                     except Exception as e:
                         logger.error(f"subprocess.Popen创建失败: {str(e)}")
                         raise
@@ -934,6 +1092,7 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                         raise RuntimeError("进程创建成功但stdout为None")
                     
                     output_lines = []
+                    next_disk_check = time.monotonic()
                     logger.info("开始读取yt-dlp输出...")
                     
                     # 确保process.stdout不为None且可迭代
@@ -941,66 +1100,76 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                         logger.error("process.stdout为None，无法读取输出")
                         raise RuntimeError("进程创建成功但stdout为None")
                     
-                    for line in process.stdout:
-                        if cancel_event is not None and cancel_event.is_set():
-                            logger.info("检测到任务取消请求，准备终止yt-dlp进程")
-                            process.terminate()
-                            try:
-                                process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                            raise RuntimeError("任务已取消")
-                        output_lines.append(line)
-                        line = line.strip()
-                        logger.debug(f"yt-dlp输出: {line}")
+                    try:
+                        for line in process.stdout:
+                            if time.monotonic() >= next_disk_check:
+                                next_disk_check = time.monotonic() + 15
+                                if poll_disk(task_dir, disk_threshold_bytes()):
+                                    logger.warning("磁盘剩余空间低于阈值，停止下载")
+                                    _stop_download_process(process)
+                                    raise DownloadGateInterrupted(_current_download_block_message())
+                            blocked = describe_download_block()
+                            if blocked:
+                                logger.info("下载闸门已关闭，停止 yt-dlp：%s", blocked)
+                                _stop_download_process(process)
+                                raise DownloadGateInterrupted(blocked)
+                            if cancel_event is not None and cancel_event.is_set():
+                                logger.info("检测到任务取消请求，准备终止yt-dlp进程")
+                                _stop_download_process(process)
+                                raise RuntimeError("任务已取消")
+                            output_lines.append(line)
+                            line = line.strip()
+                            logger.debug(f"yt-dlp输出: {line}")
                         
-                        # 解析进度信息
-                        if '[download]' in line and '%' in line:
-                            try:
-                                # 解析进度百分比，例如: [download]  45.2% of 123.45MiB at 1.23MiB/s ETA 00:30
-                                if 'of' in line and 'at' in line:
-                                    parts = line.split()
-                                    for i, part in enumerate(parts):
-                                        if part.endswith('%'):
-                                            percent_str = part.replace('%', '')
-                                            progress_percent = float(percent_str)
+                            # 解析进度信息
+                            if '[download]' in line and '%' in line:
+                                try:
+                                    # 解析进度百分比，例如: [download]  45.2% of 123.45MiB at 1.23MiB/s ETA 00:30
+                                    if 'of' in line and 'at' in line:
+                                        parts = line.split()
+                                        for i, part in enumerate(parts):
+                                            if part.endswith('%'):
+                                                percent_str = part.replace('%', '')
+                                                progress_percent = float(percent_str)
                                             
-                                            # 提取文件大小和下载速度
-                                            file_size = ""
-                                            download_speed = ""
-                                            eta = ""
+                                                # 提取文件大小和下载速度
+                                                file_size = ""
+                                                download_speed = ""
+                                                eta = ""
                                             
-                                            if i + 2 < len(parts) and parts[i + 1] == 'of':
-                                                file_size = parts[i + 2]
+                                                if i + 2 < len(parts) and parts[i + 1] == 'of':
+                                                    file_size = parts[i + 2]
                                             
-                                            for j in range(i + 3, len(parts)):
-                                                if parts[j] == 'at' and j + 1 < len(parts):
-                                                    download_speed = parts[j + 1]
-                                                elif parts[j] == 'ETA' and j + 1 < len(parts):
-                                                    eta = parts[j + 1]
-                                                    break
+                                                for j in range(i + 3, len(parts)):
+                                                    if parts[j] == 'at' and j + 1 < len(parts):
+                                                        download_speed = parts[j + 1]
+                                                    elif parts[j] == 'ETA' and j + 1 < len(parts):
+                                                        eta = parts[j + 1]
+                                                        break
                                             
-                                            progress_info = {
-                                                'percent': progress_percent,
-                                                'file_size': file_size,
-                                                'speed': download_speed,
-                                                'eta': eta
-                                            }
+                                                progress_info = {
+                                                    'percent': progress_percent,
+                                                    'file_size': file_size,
+                                                    'speed': download_speed,
+                                                    'eta': eta
+                                                }
                                             
-                                            progress_callback(progress_info)
-                                            break
-                            except (ValueError, IndexError) as e:
-                                logger.debug(f"解析进度信息失败: {e}")
+                                                progress_callback(progress_info)
+                                                break
+                                except (ValueError, IndexError) as e:
+                                    logger.debug(f"解析进度信息失败: {e}")
                     
-                    process.wait()
-                    output = ''.join(output_lines)
+                        process.wait()
+                        output = ''.join(output_lines)
 
-                    if cancel_event is not None and cancel_event.is_set():
-                        logger.info("yt-dlp执行完成后检测到任务取消请求")
-                        raise RuntimeError("任务已取消")
+                        if cancel_event is not None and cancel_event.is_set():
+                            logger.info("yt-dlp执行完成后检测到任务取消请求")
+                            raise RuntimeError("任务已取消")
                     
-                    if process.returncode != 0:
-                        raise subprocess.CalledProcessError(process.returncode, cmd, output)
+                        if process.returncode != 0:
+                            raise subprocess.CalledProcessError(process.returncode, cmd, output)
+                    finally:
+                        unregister_download_process(process)
                 else:
                     # 不需要进度回调时使用原来的方式，设置UTF-8编码
                     process = subprocess.run(
@@ -1019,9 +1188,16 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                 
                 break  # 成功执行，跳出重试循环
                 
+            except DownloadGateInterrupted as exc:
+                logger.warning("%s", exc)
+                return False, str(exc)
             except subprocess.CalledProcessError as e:
                 if cancel_event is not None and cancel_event.is_set():
                     return False, "任务已取消"
+                from modules.pipeline.gates import describe_download_block
+                blocked_now = describe_download_block()
+                if blocked_now:
+                    return False, blocked_now
                 # CalledProcessError 的字符串形式会带上完整命令（含代理凭据），
                 # 因此这里只记录退出码，避免凭据泄露到日志。
                 logger.warning(
@@ -1047,10 +1223,11 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                     logger.warning("手动合并失败，将继续进行下载重试")
 
                 if _looks_like_youtube_bot_challenge(combined_error):
-                    # 下载阶段检测到反机器人验证，尝试通过 CookieCloud 刷新 Cookie 后重试
-                    if attempt < max_retries - 1 and not cookiecloud_tried_in_download:
+                    # 先给 CookieCloud 一次刷新机会；刷新后仍失败才熔断，不再继续打 YouTube。
+                    if not cookiecloud_tried_in_download:
                         cookiecloud_tried_in_download = True
                         logger.warning("下载阶段检测到YouTube反机器人验证，尝试通过CookieCloud刷新Cookie")
+                        refreshed = False
                         try:
                             config = load_config()
                             sync_ok, sync_info = try_cookiecloud_youtube_sync(config)
@@ -1058,21 +1235,25 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
                                 new_path = sync_info.get("output_path") or sync_info.get("output_path_display")
                                 if new_path and os.path.isfile(new_path):
                                     cookies_path = new_path
+                                    refreshed = True
                                     logger.info("CookieCloud同步成功，使用刷新后的Cookie重试下载")
-                                    # 更新 cmd 中的 --cookies 参数
                                     if '--cookies' in cmd:
                                         idx = cmd.index('--cookies')
                                         cmd[idx + 1] = new_path
                                     else:
                                         _append_yt_dlp_network_args(cmd, cookies_path=cookies_path)
-                                    time.sleep(2)
-                                    continue
                                 else:
                                     logger.warning("CookieCloud同步成功但未生成有效的cookie文件")
                             else:
                                 logger.warning("CookieCloud同步失败: %s", sync_info)
                         except Exception as cc_exc:
                             logger.warning("CookieCloud刷新Cookie时发生未预期错误: %s", type(cc_exc).__name__)
+                        if refreshed and attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue
+                    tripped = _activate_youtube_download_gate(combined_error, logger)
+                    if tripped:
+                        return False, tripped
 
                 if "The page needs to be reloaded." in combined_error:
                     if attempt < max_retries - 1 and '--cookies' in cmd:

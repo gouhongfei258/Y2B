@@ -2104,7 +2104,10 @@ class TaskProcessor(
             if PIPELINE_STAGE_DOWNLOAD_VIDEO in completed_stages:
                 task_logger.info("跳过下载视频文件（checkpoint已完成）")
             else:
-                self._download_video_file(task_id, task['youtube_url'], task_logger)
+                download_outcome = self._download_video_file(task_id, task['youtube_url'], task_logger)
+                if download_outcome == 'held':
+                    task_logger.info("下载被闸门暂停，任务回到等待队列；已完成下载的编码和上传会继续")
+                    return
                 _raise_if_cancelled(task_id, task_logger)
                 task = get_task(task_id)
                 if task is not None and task['status'] == TASK_STATES['FAILED']:
@@ -2259,6 +2262,18 @@ class TaskProcessor(
                 return
             
             # 按创建时间排序，启动最早的pending任务
+            from modules.pipeline.gates import downloads_blocked, task_needs_download
+            if downloads_blocked():
+                runnable = [task for task in pending_tasks if not task_needs_download(task)]
+                held = len(pending_tasks) - len(runnable)
+                if held and not runnable:
+                    logger.info(
+                        "下载闸门关闭，%s 个仍需下载的任务继续等待；编码和上传不受影响",
+                        held,
+                    )
+                    return
+                pending_tasks = runnable
+
             pending_tasks.sort(key=lambda x: x['created_at'])
             next_task = pending_tasks[0]
             
@@ -3191,6 +3206,17 @@ def force_upload_task(task_id, config=None):
 
 # 全局任务处理器实例
 _global_task_processor = None
+
+def kick_pending_downloads_if_running():
+    """闸门打开后立刻看一眼等待队列。处理器还没起来时什么都不做。"""
+    proc = _global_task_processor
+    if proc is None:
+        return
+    try:
+        proc._check_and_start_next_pending_task()
+    except Exception as exc:
+        logger.warning(f"恢复下载后调度等待任务失败: {exc}")
+
 
 def get_global_task_processor(config=None):
     """

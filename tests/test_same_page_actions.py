@@ -159,6 +159,32 @@ class SamePageTemplateTests(unittest.TestCase):
         self.assertNotIn('data-same-page', login)
         logout_form = base.split("url_for('logout')", 1)[1].split('</form>', 1)[0]
         self.assertNotIn('data-same-page', logout_form)
+        banner = (REPO_ROOT / 'templates' / 'partials' / 'runtime_gates_banner.html').read_text(encoding='utf-8')
+        self.assertIn('data-same-page="refresh-gates"', banner)
+        self.assertIn("{% include 'partials/runtime_gates_banner.html' %}", tasks)
+
+
+class DownloadGateSamePageTests(unittest.TestCase):
+    def setUp(self):
+        web_app.app.config['TESTING'] = True
+        self.client = web_app.app.test_client()
+
+    def test_download_pause_ajax_stays_on_page(self):
+        with patch.object(web_app, 'load_config', return_value={'password_protection_enabled': False}), \
+             patch('modules.pipeline.gates.pause_downloads'):
+            ajax = self.client.post(
+                '/downloads/pause',
+                data={'next': 'tasks'},
+                headers=AJAX_HEADERS,
+            )
+            plain = self.client.post('/downloads/pause', data={'next': 'tasks'})
+        self.assertEqual(ajax.status_code, 200)
+        payload = ajax.get_json()
+        self.assertTrue(payload['success'])
+        self.assertIn('暂停下载', payload['message'])
+        self.assertNotIn('redirect', payload)
+        self.assertEqual(plain.status_code, 302)
+        self.assertTrue(plain.headers['Location'].endswith('/tasks'))
 
 
 if __name__ == '__main__':

@@ -245,6 +245,9 @@ python app.py
 - `ACFUN_COOKIES_PATH`：AcFun Cookie 路径
 - `BILIBILI_COOKIES_PATH`：bilibili Cookie 路径
 - `BILIBILI_SUBMIT_API`：bilibili 投稿接口，`auto`（默认，优先必剪 PC 接口，失败回退 Web）/ `bcut_pc` / `web`（手改成 `bcut` 等别名也会被归一化后再保存）
+- `BILIBILI_UPLOAD_LINE`：bilibili 上传线路，`auto`（默认，六条线路测速）/ `bda2` / `bldsa` / `qn` / `ws` / `txa` / `alia`
+- `BILIBILI_PREUPLOAD_COOLDOWN_MINUTES`：preupload HTTP 406 风控冷却，默认 `30`。窗口内不再请求 Bilibili，也不会因为本地拒绝而刷新到期时间
+- `BILIBILI_SUBMIT_COOLDOWN_MINUTES`：投稿 code 137022 频率冷却，默认 `15`。窗口内不再调用投稿接口；CDN 已传完的文件冷却结束后只重试提交
 - `YOUTUBE_PROXY_ENABLED` / `YOUTUBE_PROXY_URL`：YouTube 下载代理
 - `YOUTUBE_API_PROXY_ENABLED` / `YOUTUBE_API_PROXY_URL`：YouTube 监控 API 独立代理，不继承下载代理
 - `YOUTUBE_DOWNLOAD_THREADS`：下载线程数
@@ -338,7 +341,8 @@ AI 文本功能同时兼容 OpenAI Chat Completions 与 Responses API。`OPENAI_
 - `MAX_CONCURRENT_UPLOADS`：最大并发上传数，默认 `1`
 - `LOG_CLEANUP_ENABLED` / `LOG_CLEANUP_HOURS` / `LOG_CLEANUP_INTERVAL`
 - `DOWNLOAD_CLEANUP_ENABLED` / `DOWNLOAD_CLEANUP_HOURS` / `DOWNLOAD_CLEANUP_INTERVAL`
-- `DELETE_DOWNLOAD_FILES_AFTER_UPLOAD`：所有目标平台上传成功后立即删除该任务的下载文件（默认关闭）
+- `DOWNLOAD_DISK_FREE_THRESHOLD_GB`：下载卷剩余空间阈值，默认 `10` GB。低于阈值时暂停下载；清理或投稿删除把空间腾回来后自动恢复
+- `DELETE_DOWNLOAD_FILES_AFTER_UPLOAD`：所有目标平台上传成功后立即删除该任务的下载文件（默认关闭）。磁盘已经低于阈值时，即使这个开关关闭，也会只删除刚投稿成功的那一条任务目录，好让下载能够恢复
 
 ### 通知推送
 

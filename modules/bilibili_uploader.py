@@ -301,9 +301,10 @@ class _BilibiliChunkProgress:
 class BilibiliUploader:
     """Bilibili uploader based on the internal SDK subset."""
 
-    def __init__(self, cookie_file: str, submit_api: str = "auto"):
+    def __init__(self, cookie_file: str, submit_api: str = "auto", upload_line: str = "auto"):
         self.cookie_file = cookie_file
         self.submit_api = normalize_submit_api(submit_api)
+        self.upload_line = upload_line
         self.logger = None
         self.task_id = None
 
@@ -333,8 +334,27 @@ class BilibiliUploader:
         # 本次投稿每条通道的失败记录，由 SUBMIT_FALLBACK / SUBMIT_FAILED 事件填充。
         # 放在 try 之前，保证异常处理分支无论 uploader 是否创建成功都能读到。
         submit_attempts: List[dict] = []
+        uploader = None
+        runtime_config: dict = {}
+        from modules.config_manager import load_config
+        from modules.pipeline.gates import (
+            arm_bilibili_137022,
+            arm_bilibili_406,
+            bilibili_local_block_message,
+            clear_submit_reuse,
+            configured_137022_minutes,
+            configured_406_minutes,
+            peek_submit_reuse,
+            save_submit_reuse,
+        )
 
         try:
+            runtime_config = load_config()
+            blocked = bilibili_local_block_message()
+            if blocked:
+                self.log(blocked)
+                return False, blocked
+
             configure_bilibili_runtime()
 
             if not os.path.exists(video_file_path):
@@ -390,12 +410,17 @@ class BilibiliUploader:
                 path=video_file_path,
                 title=safe_title,
             )
+            reuse_submit = peek_submit_reuse(self.task_id, video_file_path)
+            if reuse_submit:
+                self.log("检测到可复用的分P上传结果，本次只重试投稿提交，不再预上传")
             uploader = video_uploader.VideoUploader(
                 pages=[page],
                 meta=meta,
                 credential=credential,
                 cover=cover_file_path,
+                line=video_uploader.resolve_upload_line(self.upload_line),
                 submit_api=self.submit_api,
+                reuse_submit=reuse_submit,
             )
 
             last_emitted_text = ""
@@ -560,6 +585,7 @@ class BilibiliUploader:
             if not bvid and not aid:
                 return False, f"bilibili返回中未找到 bvid/aid: {result}"
 
+            clear_submit_reuse(self.task_id)
             video_url = f"https://www.bilibili.com/video/{bvid}" if bvid else ""
 
             return True, {
@@ -577,7 +603,31 @@ class BilibiliUploader:
         except ResponseCodeException as e:
             pretty_error = _format_bilibili_exception(e)
             if _is_bilibili_http_406(e):
-                pretty_error = _bilibili_406_hint()
+                remaining, _refreshed = arm_bilibili_406(configured_406_minutes(runtime_config))
+                pretty_error = (
+                    f"{_bilibili_406_hint()} "
+                    f"已进入风控冷却，剩余约 {max(1, int(remaining // 60))} 分钟，期间不会再请求 Bilibili。"
+                )
+                self.log(f"Bilibili HTTP 406 风控：{pretty_error}")
+            elif _extract_response_code_from_exception(e) == 137022:
+                remaining, _refreshed = arm_bilibili_137022(
+                    configured_137022_minutes(runtime_config)
+                )
+                payload = getattr(uploader, "submit_reuse_payload", None) if uploader else None
+                if isinstance(payload, dict):
+                    try:
+                        payload = dict(payload)
+                        payload["video_path"] = os.path.abspath(video_file_path)
+                        payload["size"] = os.path.getsize(video_file_path)
+                        save_submit_reuse(self.task_id, payload)
+                        self.log("分P已上传，137022 冷却结束后将只重试投稿提交")
+                    except OSError:
+                        self.log("137022 时无法记录可复用的上传结果")
+                pretty_error = (
+                    "bilibili投稿被 code 137022 拒绝（投稿频率限制）。"
+                    f"已进入频率冷却，剩余约 {max(1, int(remaining // 60))} 分钟，期间不会再调用投稿接口。"
+                )
+                self.log(f"Bilibili code 137022 频率限制：{pretty_error}")
             elif _is_bilibili_account_risk(e) or _submit_attempts_hit_account_risk(
                 submit_attempts
             ):
@@ -588,8 +638,12 @@ class BilibiliUploader:
             return False, f"bilibili上传异常: {pretty_error}"
         except Exception as e:
             if _is_bilibili_http_406(e):
-                hint = _bilibili_406_hint()
-                self.log(f"bilibili上传异常: {hint}")
+                remaining, _refreshed = arm_bilibili_406(configured_406_minutes(runtime_config))
+                hint = (
+                    f"{_bilibili_406_hint()} "
+                    f"已进入风控冷却，剩余约 {max(1, int(remaining // 60))} 分钟，期间不会再请求 Bilibili。"
+                )
+                self.log(f"Bilibili HTTP 406 风控：{hint}")
                 self.log(traceback.format_exc())
                 return False, f"bilibili上传异常: {hint}"
             if _is_bilibili_account_risk(e) or _submit_attempts_hit_account_risk(
