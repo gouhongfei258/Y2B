@@ -29,10 +29,13 @@ class CookiePathResolutionTests(unittest.TestCase):
         task_manager_tree = ast.parse(
             (root / "modules" / "task_manager.py").read_text(encoding="utf-8")
         )
+        upload_tree = ast.parse(
+            (root / "modules" / "pipeline" / "upload.py").read_text(encoding="utf-8")
+        )
 
         functions = {
             node.name: node
-            for tree in (app_tree, task_manager_tree)
+            for tree in (app_tree, task_manager_tree, upload_tree)
             for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name in {

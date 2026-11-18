@@ -372,7 +372,9 @@ class UploadPathTagResolutionTests(unittest.TestCase):
 
 class UploadPathWiringTests(unittest.TestCase):
     def test_上传路径都使用平台感知的标签解析(self):
-        source = pathlib.Path(tm.__file__).read_text(encoding='utf-8')
+        source = pathlib.Path(tm.__file__).resolve().parent.joinpath(
+            'pipeline', 'upload.py'
+        ).read_text(encoding='utf-8')
         acfun_body = _function_source(source, '_do_upload_to_acfun')
         bilibili_body = _function_source(source, '_do_upload_to_bilibili')
 
