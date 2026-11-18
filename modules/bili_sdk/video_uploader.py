@@ -158,12 +158,35 @@ class Lines(Enum):
     + QN：七牛
     + WS：网宿
     + BLDSA：bldsa
+    + TXA：腾讯
+    + ALIA：阿里云
     """
 
     BDA2 = "bda2"
     QN = "qn"
     WS = "ws"
     BLDSA = "bldsa"
+    TXA = "txa"
+    ALIA = "alia"
+
+
+_UPLOAD_LINE_NAMES = {item.value for item in Lines}
+# 较长的线路名放前面，避免较短名字抢先匹配。
+_UPLOAD_CDN_TOKEN = r"bldsa|bda2|alia|txa|qn|ws"
+_UPLOAD_ENDPOINT_PATTERN = re.compile(
+    rf"//upos-(?:sz|cs)-upcdn(?:{_UPLOAD_CDN_TOKEN})\.bilivideo\.com"
+)
+_UPLOAD_CDN_TOKEN_PATTERN = re.compile(rf"upcdn(?:{_UPLOAD_CDN_TOKEN})")
+
+
+def resolve_upload_line(value) -> Optional[Lines]:
+    """把配置里的线路名转成 Lines。auto / 空值表示测速自选。"""
+    key = str(value or "").strip().lower()
+    if key in ("", "auto", "none"):
+        return None
+    if key not in _UPLOAD_LINE_NAMES:
+        return None
+    return Lines(key)
 
 
 with open(
@@ -808,6 +831,7 @@ class VideoUploader(AsyncEvent):
         cover: Optional[Union[str, Picture]] = "",
         line: Optional[Lines] = None,
         submit_api: Optional[str] = SUBMIT_API_AUTO,
+        reuse_submit: Optional[dict] = None,
     ):
         """
         Args:
@@ -863,6 +887,8 @@ class VideoUploader(AsyncEvent):
             else cover if isinstance(cover, Picture) else Picture().from_file(cover)
         )
         self.line = line
+        self.reuse_submit = reuse_submit if isinstance(reuse_submit, dict) else None
+        self.submit_reuse_payload: Optional[dict] = None
         self.submit_api = normalize_submit_api(submit_api)
         # 记录本次投稿实际成功的通道，便于上层日志展示
         self.submit_api_used: Optional[str] = None
@@ -1096,6 +1122,21 @@ class VideoUploader(AsyncEvent):
             dict: 返回带有 bvid 和 aid 的字典。
         """
 
+        if self._reuse_submit_ready():
+            videos = list(self.reuse_submit.get("videos") or [])
+            cover_url = str(self.reuse_submit.get("cover_url") or "")
+            task = create_task(self._submit(videos, cover_url))
+            self.__task = task
+            try:
+                result = await task
+                self.__task = None
+                return result
+            except CancelledError:
+                return None  # type: ignore
+            except Exception as e:
+                self.dispatch(VideoUploaderEvents.FAILED.value, {"err": e})
+                raise e
+
         self.line = await _choose_line(self.line)
         task = create_task(self._main())
         self.__task = task
@@ -1192,15 +1233,28 @@ class VideoUploader(AsyncEvent):
 
         return data
 
+    def _reuse_submit_ready(self) -> bool:
+        payload = self.reuse_submit if isinstance(self.reuse_submit, dict) else None
+        if not payload:
+            return False
+        videos = payload.get("videos")
+        cover_url = str(payload.get("cover_url") or "")
+        return isinstance(videos, list) and len(videos) > 0 and bool(cover_url)
+
     @staticmethod
     def _switch_upload_endpoint(preupload: dict, line: dict = None) -> dict:
-        # 替换线路 endpoint
-        if line is not None and re.match(
-            r"//upos-(sz|cs)-upcdn(bda2|ws|qn)\.bilivideo\.com", preupload["endpoint"]
-        ):
-            preupload["endpoint"] = re.sub(
-                r"upcdn(bda2|qn|ws)", f'upcdn{line["upcdn"]}', preupload["endpoint"]
-            )
+        # 替换线路 endpoint。旧正则只认 bda2|ws|qn，bldsa/txa/alia 会被漏掉。
+        if not isinstance(preupload, dict) or not isinstance(line, dict):
+            return preupload
+        endpoint = str(preupload.get("endpoint") or "")
+        upcdn = str(line.get("upcdn") or "")
+        if not endpoint or not upcdn:
+            return preupload
+        if not _UPLOAD_ENDPOINT_PATTERN.match(endpoint):
+            return preupload
+        preupload["endpoint"] = _UPLOAD_CDN_TOKEN_PATTERN.sub(
+            f"upcdn{upcdn}", endpoint, count=1
+        )
         return preupload  # tbh not needed since it is ref type
 
     @staticmethod
@@ -1427,6 +1481,12 @@ class VideoUploader(AsyncEvent):
                 resp = await self._submit_once(api_name, meta)
             except Exception as err:
                 last_error = err
+                if submit_error_code(err) == 137022:
+                    # CDN 已传完，只记下投稿载荷，冷却结束后重试 submit，不再 preupload。
+                    self.submit_reuse_payload = {
+                        "videos": videos,
+                        "cover_url": cover_url,
+                    }
                 attempt = {
                     "api": api_name,
                     "code": submit_error_code(err),

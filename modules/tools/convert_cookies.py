@@ -270,12 +270,91 @@ def _parse_text_cookie_line(line: str) -> Optional[dict]:
     }
 
 
+_COOKIE_HEADER_ATTRS = {
+    "path", "domain", "expires", "max-age", "secure", "httponly", "samesite",
+}
+
+
+def _text_contains_netscape_row(text: str) -> bool:
+    """文本里是否已经有一行 Netscape 7 列数据。"""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#") and not line.startswith(_HTTPONLY_PREFIX):
+            continue
+        line = _strip_httponly_prefix(line)
+        if _looks_like_netscape_row(line.split("\t")):
+            return True
+    return False
+
+
+def _cookie_header_rows(text: str) -> Optional[list]:
+    """解析 `name=value; name2=value2`。不是这种格式时返回 None，交给其它解析器。"""
+    stripped = text.strip()
+    if not stripped or "\t" in stripped or "=" not in stripped:
+        return None
+    if stripped.startswith("#") or stripped.startswith("[") or stripped.startswith("{"):
+        return None
+    if _text_contains_netscape_row(stripped):
+        return None
+
+    domain = ".youtube.com"
+    rows: list[str] = []
+    saw_pair = False
+    for part in re.split(r"[;\r\n]+", stripped):
+        piece = part.strip()
+        if not piece or "=" not in piece:
+            continue
+        name, value = piece.split("=", 1)
+        name = name.strip()
+        value = value.strip().strip('"')
+        if not name or any(ch.isspace() for ch in name):
+            continue
+        saw_pair = True
+        if name.lower() in _COOKIE_HEADER_ATTRS:
+            if name.lower() == "domain" and "." in value:
+                domain = value if value.startswith(".") else f".{value.lstrip('.')}"
+            continue
+        rendered = _render_netscape_line(
+            domain, name, value, path="/", secure=True, expiration="0",
+        )
+        if rendered:
+            rows.append(rendered)
+    if not saw_pair or not rows:
+        return None
+    return rows
+
+
+def cookies_export_to_netscape_text(text: str) -> Optional[str]:
+    """把粘贴的 Cookie 文本转成 Netscape 文件内容。无法识别时返回 None。"""
+    raw = text or ""
+    if not raw.strip():
+        return None
+    if _text_contains_netscape_row(raw):
+        body = raw.strip()
+        if not body.lower().startswith("# netscape"):
+            body = "# Netscape HTTP Cookie File\n" + body
+        if not body.endswith("\n"):
+            body += "\n"
+        return body
+    lines = convert_to_netscape_lines(raw)
+    if not lines or len(lines) <= 1:
+        return None
+    return "\n".join(lines) + "\n"
+
+
 def convert_to_netscape_lines(text: str) -> Optional[list]:
-    """把文本（JSON 或文本表格）转换为 Netscape 行列表。
+    """把文本（JSON、请求头或文本表格）转换为 Netscape 行列表。
 
     第一行固定为 "# Netscape HTTP Cookie File"；没有任何有效 cookie 记录时返回 None。
     """
     out_lines = ["# Netscape HTTP Cookie File"]
+
+    header_rows = _cookie_header_rows(text)
+    if header_rows:
+        out_lines.extend(header_rows)
+        return out_lines
 
     json_records = _try_parse_json_records(text)
     if json_records is not None:

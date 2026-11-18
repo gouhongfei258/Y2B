@@ -33,6 +33,9 @@
         </div>
     </div>
 
+    {% set next_page = 'tasks' %}
+    {% include 'partials/runtime_gates_banner.html' %}
+
     {% if tasks %}
     <div class="modern-list">
         <!-- 桌面端表格（md及以上显示） -->

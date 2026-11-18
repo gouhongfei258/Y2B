@@ -18,16 +18,8 @@
     </div>
 </div>
 
-{% if bilibili_cooldowns %}
-<div class="alert alert-warning mt-3 mb-0" role="status">
-    <div class="fw-semibold mb-1"><i class="bi bi-hourglass-split me-1"></i>bilibili 账号冷却</div>
-    <ul class="mb-0">
-        {% for notice in bilibili_cooldowns %}
-        <li>{{ notice }}</li>
-        {% endfor %}
-    </ul>
-</div>
-{% endif %}
+{% set next_page = 'index' %}
+{% include 'partials/runtime_gates_banner.html' %}
 
 <!-- KPI cards -->
 <div class="row g-3 mt-2">

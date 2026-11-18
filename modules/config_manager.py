@@ -120,6 +120,39 @@ _VIDEO_CPU_CODECS = ('x264', 'x265')
 _VIDEO_CPU_CODEC_DEFAULT = 'x264'
 
 
+_BILIBILI_UPLOAD_LINES = ("auto", "bda2", "bldsa", "qn", "ws", "txa", "alia")
+
+
+def normalize_bilibili_upload_line(value, default: str = "auto") -> str:
+    key = str(value or "").strip().lower()
+    if key in _BILIBILI_UPLOAD_LINES:
+        return key
+    fallback = str(default or "auto").strip().lower()
+    return fallback if fallback in _BILIBILI_UPLOAD_LINES else "auto"
+
+
+def normalize_bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return int(default)
+    if number < minimum or number > maximum:
+        return int(default)
+    return number
+
+
+def normalize_preupload_cooldown_minutes(value, default: int = 30) -> int:
+    return normalize_bounded_int(value, default, 1, 1440)
+
+
+def normalize_bilibili_submit_cooldown_minutes(value, default: int = 15) -> int:
+    return normalize_bounded_int(value, default, 1, 1440)
+
+
+def normalize_disk_threshold_gb(value, default: int = 10) -> int:
+    return normalize_bounded_int(value, default, 1, 10240)
+
+
 def _normalize_submit_api_value(value) -> str:
     """把 BILIBILI_SUBMIT_API 归一化成 auto / bcut_pc / web 三个规范值。
 
@@ -191,10 +224,14 @@ DEFAULT_CONFIG = {
     "BILIBILI_COOKIES_PATH": "cookies/bili_cookies.json", # bilibili Cookie 文件路径（默认账号）
     # bilibili 投稿通道：auto（优先必剪，失败回退 Web）/ bcut_pc / web
     "BILIBILI_SUBMIT_API": "auto",
+    # bilibili 上传线路：auto 测速，或指定 bda2/bldsa/qn/ws/txa/alia
+    "BILIBILI_UPLOAD_LINE": "auto",
     # 这些冷却按 bilibili 账号分别计时，只暂停触发的那个账号。
     "BILIBILI_PREUPLOAD_COOLDOWN_MINUTES": 30,  # preupload HTTP 406
     "BILIBILI_SUBMIT_COOLDOWN_MINUTES": 15,  # 投稿 code 137022
     "BILIBILI_RISK_COOLDOWN_MINUTES": 30,  # 投稿 code 603
+    # 下载卷剩余空间低于该值（GB）时暂停下载，清理后高于阈值自动恢复。
+    "DOWNLOAD_DISK_FREE_THRESHOLD_GB": 10,
     # CookieCloud（首版仅用于手动拉取 YouTube Cookies）
     "COOKIECLOUD_ENABLED": False,
     "COOKIECLOUD_SERVER_URL": "",
@@ -523,6 +560,36 @@ def load_config():
                 )
                 submit_api_changed = config['BILIBILI_SUBMIT_API'] != submit_api_before
 
+                upload_line_before = config.get('BILIBILI_UPLOAD_LINE')
+                config['BILIBILI_UPLOAD_LINE'] = normalize_bilibili_upload_line(
+                    upload_line_before
+                )
+                upload_line_changed = config['BILIBILI_UPLOAD_LINE'] != upload_line_before
+
+                preupload_cooldown_before = config.get('BILIBILI_PREUPLOAD_COOLDOWN_MINUTES')
+                config['BILIBILI_PREUPLOAD_COOLDOWN_MINUTES'] = normalize_preupload_cooldown_minutes(
+                    preupload_cooldown_before
+                )
+                preupload_cooldown_changed = (
+                    config['BILIBILI_PREUPLOAD_COOLDOWN_MINUTES'] != preupload_cooldown_before
+                )
+
+                submit_cooldown_before = config.get('BILIBILI_SUBMIT_COOLDOWN_MINUTES')
+                config['BILIBILI_SUBMIT_COOLDOWN_MINUTES'] = normalize_bilibili_submit_cooldown_minutes(
+                    submit_cooldown_before
+                )
+                submit_cooldown_changed = (
+                    config['BILIBILI_SUBMIT_COOLDOWN_MINUTES'] != submit_cooldown_before
+                )
+
+                disk_threshold_before = config.get('DOWNLOAD_DISK_FREE_THRESHOLD_GB')
+                config['DOWNLOAD_DISK_FREE_THRESHOLD_GB'] = normalize_disk_threshold_gb(
+                    disk_threshold_before
+                )
+                disk_threshold_changed = (
+                    config['DOWNLOAD_DISK_FREE_THRESHOLD_GB'] != disk_threshold_before
+                )
+
                 quality_mode_before = config.get('YOUTUBE_DOWNLOAD_QUALITY_MODE')
                 config['YOUTUBE_DOWNLOAD_QUALITY_MODE'] = normalize_youtube_download_quality_mode(
                     quality_mode_before
@@ -574,6 +641,10 @@ def load_config():
                     or cpu_codec_changed
                     or upload_target_changed
                     or submit_api_changed
+                    or upload_line_changed
+                    or preupload_cooldown_changed
+                    or submit_cooldown_changed
+                    or disk_threshold_changed
                     or quality_mode_changed
                     or quality_height_changed
                     or session_timeout_changed
@@ -713,6 +784,14 @@ def update_config(new_config):
                 # 别名一律归一化后再落盘，否则设置页三个 option 都匹配不上，
                 # 会出现"显示自动、实际走必剪"的回显错位。
                 current_config[key] = _normalize_submit_api_value(new_config[key])
+            elif key == 'BILIBILI_UPLOAD_LINE':
+                current_config[key] = normalize_bilibili_upload_line(new_config[key])
+            elif key == 'BILIBILI_PREUPLOAD_COOLDOWN_MINUTES':
+                current_config[key] = normalize_preupload_cooldown_minutes(new_config[key])
+            elif key == 'BILIBILI_SUBMIT_COOLDOWN_MINUTES':
+                current_config[key] = normalize_bilibili_submit_cooldown_minutes(new_config[key])
+            elif key == 'DOWNLOAD_DISK_FREE_THRESHOLD_GB':
+                current_config[key] = normalize_disk_threshold_gb(new_config[key])
             elif key == 'YOUTUBE_DOWNLOAD_QUALITY_MODE':
                 current_config[key] = normalize_youtube_download_quality_mode(new_config[key])
             elif key == 'YOUTUBE_DOWNLOAD_MAX_HEIGHT':

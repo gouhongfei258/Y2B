@@ -44,6 +44,8 @@ _raise_if_cancelled = Live('_raise_if_cancelled')
 _safe_json_loads = Live('_safe_json_loads')
 _subtitle_embed_allowed = Live('_subtitle_embed_allowed')
 delete_task_files = Live('delete_task_files')
+DOWNLOADS_DIR = Live('DOWNLOADS_DIR')
+kick_pending_downloads_if_running = Live('kick_pending_downloads_if_running')
 get_task = Live('get_task')
 get_task_cancel_event = Live('get_task_cancel_event')
 init_upload_semaphore = Live('init_upload_semaphore')
@@ -629,9 +631,9 @@ class UploadMixin:
                 )
                 return
             
-            # 下载视频文件
-            self._download_video_file(task_id, youtube_url, task_logger)
-            
+            if self._download_video_file(task_id, youtube_url, task_logger) == 'held':
+                return
+
             # 重新获取任务信息
             task = get_task(task_id)
             video_path = task.get('video_path_local', '') if task else ''
@@ -815,20 +817,12 @@ class UploadMixin:
                     status=TASK_STATES['COMPLETED'],
                     acfun_upload_response=json.dumps(result, ensure_ascii=False)
                 )
-                # 单平台(AcFun)上传成功后立即删除本地文件，腾出磁盘空间，
-                # 避免大视频长期占用磁盘导致后续任务因 No space left on device 失败。
-                # 双平台(both)场景由 B 站上传分支（最后平台）统一删除，这里不重复删。
-                try:
-                    if (
-                        self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)
-                        and _get_task_upload_target(task) == UPLOAD_TARGET_ACFUN
-                    ):
-                        if delete_task_files(task_id):
-                            task_logger.info(f"AcFun 上传完成，已删除本地文件释放空间: {task_id}")
-                        else:
-                            task_logger.warning(f"AcFun 上传完成，但本地文件删除失败，请手动清理: {task_id}")
-                except Exception as _e:
-                    task_logger.warning(f"上传后删除本地文件失败（不影响已完成的 AcFun 上传）: {_e}")
+                # 单平台 AcFun 才是最后一站。双平台时等 B 站成功后再删。
+                self._reclaim_posted_files(
+                    task_id,
+                    task_logger,
+                    last_platform=_get_task_upload_target(task) == UPLOAD_TARGET_ACFUN,
+                )
             else:
                 task_logger.error(f"视频上传失败: {result}")
                 update_task(
@@ -898,7 +892,8 @@ class UploadMixin:
                 )
                 return
 
-            self._download_video_file(task_id, youtube_url, task_logger)
+            if self._download_video_file(task_id, youtube_url, task_logger) == 'held':
+                return
             task = get_task(task_id)
             video_path = task.get('video_path_local', '') if task else ''
             cover_path = task.get('cover_path_local', '') if task else ''
@@ -988,7 +983,6 @@ class UploadMixin:
                     pass
 
         from modules.bilibili_accounts import (
-            record_account_cooldown,
             request_scope_for_account,
             resolve_task_account,
         )
@@ -1091,8 +1085,12 @@ class UploadMixin:
             uploader = BilibiliUploader(
                 cookie_file=bilibili_cookies_path,
                 submit_api=self.config.get('BILIBILI_SUBMIT_API', 'auto'),
+                upload_line=self.config.get('BILIBILI_UPLOAD_LINE', 'auto'),
             )
             uploader.request_scope = request_scope
+            uploader.account_id = str(account.get("id") or "") or None
+            from modules.bilibili_accounts import account_display_name
+            uploader.account_name = account_display_name(account)
             last_progress_text = '0.0%'
 
             def _normalize_progress_text(progress_text):
@@ -1137,14 +1135,6 @@ class UploadMixin:
                 title_limit=effective_limits['title_limit'],
                 description_limit=effective_limits['description_limit'],
             )
-            for risk_code in getattr(uploader, "risk_codes", ()) or ():
-                record_account_cooldown(str(account.get("id") or ""), risk_code, self.config)
-                task_logger.warning(
-                    "账号「%s」触发 %s，已开始该账号的冷却，其他账号继续投稿",
-                    account.get("name") or account.get("id"),
-                    risk_code,
-                )
-
             if success:
                 task_logger.info(f"bilibili上传成功: {result}")
                 update_task(
@@ -1153,23 +1143,12 @@ class UploadMixin:
                     bilibili_upload_response=json.dumps(result, ensure_ascii=False),
                     upload_progress=None
                 )
-                # 上传到 B 站成功后立即删除本地文件，腾出磁盘空间，
-                # 避免大视频（如 CS2 比赛直播流，单条可达十余 GB）长期占用磁盘，
-                # 导致后续任务因「No space left on device」而失败。
-                # - bilibili 单平台：此处即为最后平台，直接删除；
-                # - both 双平台：AcFun 已先上传完成，B 站为最后平台，同样删除；
-                # - acfun 单平台：不会进入本分支，由 AcFun 分支处理。
-                try:
-                    if (
-                        self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)
-                        and _get_task_upload_target(task) != UPLOAD_TARGET_ACFUN
-                    ):
-                        if delete_task_files(task_id):
-                            task_logger.info(f"bilibili 上传完成，已删除本地文件释放空间: {task_id}")
-                        else:
-                            task_logger.warning(f"bilibili 上传完成，但本地文件删除失败，请手动清理: {task_id}")
-                except Exception as _e:
-                    task_logger.warning(f"上传后删除本地文件失败（不影响已完成的 B 站上传）: {_e}")
+                # B 站是单平台的最后一站，也是双平台流程里的最后一站。
+                self._reclaim_posted_files(
+                    task_id,
+                    task_logger,
+                    last_platform=_get_task_upload_target(task) != UPLOAD_TARGET_ACFUN,
+                )
             else:
                 task_logger.error(f"bilibili上传失败: {result}")
                 update_task(
@@ -1188,3 +1167,40 @@ class UploadMixin:
                 error_message=f"上传异常: {str(e)}",
                 upload_progress=None
             )
+
+    def _reclaim_posted_files(self, task_id, task_logger, *, last_platform: bool):
+        """最后一次投稿成功后，按清理开关或磁盘阈值删除该任务的本地文件。
+
+        只删除这一条任务目录。磁盘回到阈值以上时解除 disk-low，手动暂停和熔断不动。
+        """
+        from modules.pipeline.gates import (
+            disk_is_low,
+            disk_threshold_bytes,
+            maybe_release_disk_hold,
+        )
+
+        threshold = disk_threshold_bytes(self.config)
+        root = os.fspath(DOWNLOADS_DIR)
+        low = False
+        try:
+            low = disk_is_low(root, threshold)
+        except Exception as exc:
+            task_logger.debug(f"检查磁盘阈值失败: {exc}")
+        should_delete = bool(last_platform) and (
+            bool(self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False)) or low
+        )
+        if should_delete:
+            reason = "上传后清理已开启" if self.config.get('DELETE_DOWNLOAD_FILES_AFTER_UPLOAD', False) else "磁盘低于阈值"
+            try:
+                if delete_task_files(task_id):
+                    task_logger.info(f"{reason}，已删除本次投稿的本地文件: {task_id}")
+                else:
+                    task_logger.warning(f"本次投稿的本地文件删除失败，请手动清理: {task_id}")
+            except Exception as exc:
+                task_logger.warning(f"上传后删除本地文件失败（不影响已完成的投稿）: {exc}")
+        try:
+            if maybe_release_disk_hold(root, threshold):
+                task_logger.info("磁盘空间已回到阈值以上，自动恢复下载")
+                kick_pending_downloads_if_running()
+        except Exception as exc:
+            task_logger.debug(f"解除磁盘暂停失败: {exc}")

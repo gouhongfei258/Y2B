@@ -201,8 +201,14 @@ class BilibiliAccountTests(unittest.TestCase):
         ]
         for patcher in self.patches:
             patcher.start()
+        from modules.pipeline import gates
+        gates.override_state_path(os.path.join(self.temp.name, "runtime_gates.json"))
+        gates.set_clock(None)
 
     def tearDown(self):
+        from modules.pipeline import gates
+        gates.override_state_path(None)
+        gates.set_clock(None)
         for patcher in self.patches:
             patcher.stop()
         self.temp.cleanup()

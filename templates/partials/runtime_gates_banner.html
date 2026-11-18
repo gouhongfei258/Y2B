@@ -1,0 +1,91 @@
+{% set gates = runtime_gates if runtime_gates is defined else none %}
+{% if gates %}
+<div id="runtime-gates-banner" class="d-flex flex-column gap-2 mb-3">
+    {% if gates.bot.active or gates.bot.retries %}
+    <div class="alert alert-danger mb-0" role="status">
+        <div class="fw-semibold">YouTube 下载熔断</div>
+        <div>
+            {% if gates.bot.reason %}{{ gates.bot.reason }}{% else %}等待确认是否可以继续下载。{% endif %}
+            {% if gates.bot.active %}
+            下次自动试探：{{ gates.bot.until_display }}（剩余 {{ gates.bot.remaining_display }}）。
+            {% else %}
+            当前等待已结束。已累计 {{ gates.bot.retries }} 次，下次再触发会使用 {{ gates.bot.next_backoff_minutes }} 分钟退避。
+            {% endif %}
+        </div>
+        <div class="d-flex flex-wrap gap-2 mt-2">
+            {% if gates.bot.active %}
+            <form method="post" action="{{ url_for('bot_circuit_resume_route') }}" class="d-inline" data-same-page="refresh-gates">
+                <input type="hidden" name="next" value="{{ next_page|default('index') }}">
+                <button type="submit" class="btn btn-sm btn-light">立即恢复</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('bot_circuit_reset_route') }}" class="d-inline" data-same-page="refresh-gates">
+                <input type="hidden" name="next" value="{{ next_page|default('index') }}">
+                <button type="submit" class="btn btn-sm btn-outline-light">重置熔断</button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if gates.manual_pause %}
+    <div class="alert alert-warning mb-0" role="status">
+        下载已手动暂停，不会按时间自动恢复。正在编码或上传的任务会继续。
+    </div>
+    {% endif %}
+
+    {% if gates.disk.hold %}
+    <div class="alert alert-warning mb-0" role="status">
+        磁盘空间不足，已暂停下载（剩余 {{ gates.disk.free_display }}，阈值 {{ gates.disk.threshold_display }}）。
+        投稿清理或定时清理把空间腾回到阈值以上后会自动恢复。
+    </div>
+    {% endif %}
+
+    {% for item in gates.bili_account_cooldowns or [] %}
+    <div class="alert alert-warning mb-0" role="status">
+        bilibili 账号「{{ item.name }}」正在冷却（{{ item.label }}），剩余 {{ item.remaining_display }}，到 {{ item.until_display }} 为止。其他账号不受影响。
+        {% if item.code == '137022' %}已经传完的文件会在冷却结束后只重试提交。{% endif %}
+    </div>
+    {% endfor %}
+
+    {% if gates.bili_406.active %}
+    <div class="alert alert-warning mb-0" role="status">
+        Bilibili 风控冷却（HTTP 406 / preupload）生效中，剩余 {{ gates.bili_406.remaining_display }}，到 {{ gates.bili_406.until_display }} 为止不会请求 Bilibili。
+    </div>
+    {% endif %}
+
+    {% if gates.bili_137022.active %}
+    <div class="alert alert-warning mb-0" role="status">
+        Bilibili 投稿频率冷却（code 137022）生效中，剩余 {{ gates.bili_137022.remaining_display }}，到 {{ gates.bili_137022.until_display }} 为止不会调用投稿接口。
+        已经传完的文件会在冷却结束后只重试提交。
+    </div>
+    {% endif %}
+
+    <div class="d-flex flex-wrap gap-2">
+        {% if gates.manual_pause %}
+        <form method="post" action="{{ url_for('resume_downloads_route') }}" data-same-page="refresh-gates">
+            <input type="hidden" name="next" value="{{ next_page|default('index') }}">
+            <button type="submit" class="btn btn-success btn-sm">恢复下载</button>
+        </form>
+        {% else %}
+        <form method="post" action="{{ url_for('pause_downloads_route') }}" data-same-page="refresh-gates">
+            <input type="hidden" name="next" value="{{ next_page|default('index') }}">
+            <button type="submit" class="btn btn-outline-warning btn-sm">暂停下载</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+<script>
+window.y2bSamePageHandlers = window.y2bSamePageHandlers || {};
+if (!window.y2bSamePageHandlers['refresh-gates']) {
+    window.y2bSamePageHandlers['refresh-gates'] = function (form, data) {
+        if (typeof window.y2bRefreshRegions === 'function') {
+            window.y2bRefreshRegions(['#runtime-gates-banner']);
+        }
+        var tasksHandler = window.y2bSamePageHandlers['refresh-tasks'];
+        if (typeof tasksHandler === 'function') {
+            tasksHandler(form, data);
+        }
+    };
+}
+</script>
+{% endif %}

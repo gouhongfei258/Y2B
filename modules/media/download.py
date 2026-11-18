@@ -90,9 +90,30 @@ class VideoDownloadMixin:
             task_logger.error(f"视频信息采集失败: {result}")
             update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"采集信息失败: {result}")
 
+    def _hold_download(self, task_id, task_logger, message):
+        """下载闸门拦住任务时回到等待队列，不记成失败，也不标记下载阶段完成。"""
+        task_logger.info(message)
+        update_task(
+            task_id,
+            status=TASK_STATES['PENDING'],
+            error_message=message,
+            upload_progress=None,
+        )
+        return 'held'
+
     def _download_video_file(self, task_id, youtube_url, task_logger):
         """审核通过后下载视频文件"""
+        from modules.pipeline.gates import describe_download_block, disk_threshold_bytes, poll_disk
         from modules.youtube_handler import download_video_data
+
+        try:
+            poll_disk(os.fspath(DOWNLOADS_DIR), disk_threshold_bytes(self.config))
+        except Exception as exc:
+            task_logger.debug(f"下载前磁盘检查失败: {exc}")
+        blocked = describe_download_block()
+        if blocked:
+            return self._hold_download(task_id, task_logger, blocked)
+
         task_logger.info(f"审核通过，开始下载视频文件: {youtube_url}")
         update_task(task_id, status=TASK_STATES['DOWNLOADING'])
 
@@ -150,10 +171,15 @@ class VideoDownloadMixin:
                 raise TaskCancelledError("任务已取消")
             task_logger.error(f"下载视频文件时发生异常: {str(e)}")
             update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"下载异常: {str(e)}")
-            return
+            return 'failed'
         if is_task_cancelled(task_id):
             task_logger.info("下载完成前检测到任务取消请求")
             raise TaskCancelledError("任务已取消")
+        if not success:
+            from modules.pipeline.gates import describe_download_block
+            blocked = describe_download_block()
+            if blocked or (isinstance(result, str) and result.startswith(("下载已", "YouTube 下载已熔断", "磁盘剩余"))):
+                return self._hold_download(task_id, task_logger, blocked or str(result))
         if success:
             task_logger.info("视频文件下载成功")
             
@@ -181,6 +207,8 @@ class VideoDownloadMixin:
         else:
             task_logger.error(f"视频文件下载失败: {result}")
             update_task(task_id, status=TASK_STATES['FAILED'], error_message=f"下载视频失败: {result}")
+            return 'failed'
+        return 'ok'
 
     def _recover_cover_path(self, task_id, cover_path, task_logger):
         """尝试恢复缺失的封面文件路径。

@@ -443,56 +443,40 @@ def _load_cooldowns() -> dict:
 
 
 def record_account_cooldown(account_id: str, code: int, config: Optional[dict] = None, now: Optional[float] = None) -> Optional[float]:
-    """记下账号冷却。窗口还没结束时不把到期时间再往后推。"""
+    """记下账号冷却。窗口还没结束时不把到期时间再往后推。
+
+    实际写在运行时闸门里，按账号分开，不再使用一份全局计时器。
+    """
     try:
         code = int(code)
     except (TypeError, ValueError):
         return None
     if code not in COOLDOWN_SPECS:
         return None
+    from modules.pipeline import gates
     account_key = str(account_id or DEFAULT_ACCOUNT_ID)
-    moment = time.time() if now is None else float(now)
-    with _LOCK:
-        store = _load_cooldowns()
-        bucket = dict(store["accounts"].get(account_key) or {})
-        current = bucket.get(str(code))
-        try:
-            current_until = float(current) if current else 0.0
-        except (TypeError, ValueError):
-            current_until = 0.0
-        if current_until > moment:
-            return current_until
-        until = moment + _cooldown_minutes(config, code) * 60
-        bucket[str(code)] = until
-        store["accounts"][account_key] = bucket
-        _write_json(cooldowns_store_path(), store)
-        return until
+    previous_clock = gates._NOW
+    if now is not None:
+        moment = float(now)
+        gates.set_clock(lambda: moment)
+    else:
+        moment = gates._now()
+    try:
+        minutes = _cooldown_minutes(config, code)
+        if code == 406:
+            remaining, _refreshed = gates.arm_bilibili_406(minutes, account_id=account_key)
+        elif code == 137022:
+            remaining, _refreshed = gates.arm_bilibili_137022(minutes, account_id=account_key)
+        else:
+            remaining, _refreshed = gates.arm_bilibili_603(minutes, account_id=account_key)
+        return moment + float(remaining)
+    finally:
+        gates.set_clock(previous_clock)
 
 
 def active_cooldowns(account_id: str, now: Optional[float] = None) -> List[dict]:
-    account_key = str(account_id or "")
-    moment = time.time() if now is None else float(now)
-    store = _load_cooldowns()
-    bucket = store["accounts"].get(account_key) or {}
-    active = []
-    if not isinstance(bucket, dict):
-        return active
-    for code, spec in COOLDOWN_SPECS.items():
-        raw = bucket.get(str(code))
-        try:
-            until = float(raw) if raw else 0.0
-        except (TypeError, ValueError):
-            until = 0.0
-        if until <= moment:
-            continue
-        active.append({
-            "code": code,
-            "until": until,
-            "remaining_seconds": max(0, int(until - moment)),
-            "label": spec[2],
-        })
-    active.sort(key=lambda item: item["remaining_seconds"], reverse=True)
-    return active
+    from modules.pipeline.gates import account_cooldown_entries
+    return account_cooldown_entries(str(account_id or ""), now=now)
 
 
 def _format_remaining(seconds: int) -> str:
