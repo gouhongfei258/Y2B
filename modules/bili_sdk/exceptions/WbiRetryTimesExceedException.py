@@ -1,17 +1,11 @@
-"""
-bilibili_api.exceptions.WbiRetryTimesExceedException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.WbiRetryTimesExceedException."""
+import importlib
+import sys
 
-Wbi 重试达到最大次数
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.WbiRetryTimesExceedException"
 
-from .ApiException import ApiException
-
-
-class WbiRetryTimesExceedException(ApiException):
-    """
-    Wbi 重试达到最大次数
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.msg = f"Wbi 重试达到最大次数"
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

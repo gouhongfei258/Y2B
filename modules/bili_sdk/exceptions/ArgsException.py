@@ -1,21 +1,11 @@
-"""
-bilibili_api.exceptions.ArgsException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.ArgsException."""
+import importlib
+import sys
 
-参数错误。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.ArgsException"
 
-from .ApiException import ApiException
-
-
-class ArgsException(ApiException):
-    """
-    参数错误。
-    """
-
-    def __init__(self, msg: str):
-        """
-        Args:
-            msg (str):   错误消息。
-        """
-        super().__init__(msg)
-        self.msg = msg
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

@@ -7,7 +7,7 @@ from modules import task_manager as tm
 
 
 def _load_app_partition_helper():
-    app_path = pathlib.Path(__file__).resolve().parents[1] / 'app.py'
+    app_path = pathlib.Path(__file__).resolve().parents[1] / 'app' / 'services.py'
     source = app_path.read_text(encoding='utf-8')
     tree = ast.parse(source, filename=str(app_path))
     selected = [

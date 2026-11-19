@@ -1,31 +1,11 @@
-"""
-bilibili_api.exceptions.ResponseCodeException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.ResponseCodeException."""
+import importlib
+import sys
 
-API 返回 code 错误。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.ResponseCodeException"
 
-from .ApiException import ApiException
-
-
-class ResponseCodeException(ApiException):
-    """
-    API 返回 code 错误。
-    """
-
-    def __init__(self, code: int, msg: str, raw: dict = None):
-        """
-
-        Args:
-            code (int):             错误代码。
-
-            msg (str):              错误信息。
-
-            raw (dict, optional):   原始响应数据. Defaults to None.
-        """
-        super().__init__(msg)
-        self.msg = msg
-        self.code = code
-        self.raw = raw
-
-    def __str__(self):
-        return f"接口返回错误代码：{self.code}，信息：{self.msg}。\n{self.raw}"
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

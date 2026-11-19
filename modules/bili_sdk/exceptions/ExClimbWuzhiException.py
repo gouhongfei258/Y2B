@@ -1,17 +1,11 @@
-"""
-bilibili_api.exceptions.ExClimbWuzhiException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.ExClimbWuzhiException."""
+import importlib
+import sys
 
-ExClimbWuzhi 失败异常
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.ExClimbWuzhiException"
 
-from .ApiException import ApiException
-
-
-class ExClimbWuzhiException(ApiException):
-    """
-    ExClimbWuzhi 失败异常
-    """
-
-    def __init__(self, code: int, msg: str):
-        super().__init__()
-        self.msg = f"ExClimbWuzhi 失败，信息: {code} - {msg}"
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

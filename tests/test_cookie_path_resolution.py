@@ -25,17 +25,18 @@ class CookiePathResolutionTests(unittest.TestCase):
 
     def test_bilibili_call_sites_use_shared_cookie_path_resolver(self):
         root = pathlib.Path(__file__).resolve().parents[1]
-        app_tree = ast.parse((root / "app.py").read_text(encoding="utf-8"))
+        settings_tree = ast.parse((root / "app" / "blueprints" / "settings.py").read_text(encoding="utf-8"))
+        services_tree = ast.parse((root / "app" / "services.py").read_text(encoding="utf-8"))
         task_manager_tree = ast.parse(
-            (root / "modules" / "task_manager.py").read_text(encoding="utf-8")
+            (root / "y2b" / "pipeline" / "task_manager.py").read_text(encoding="utf-8")
         )
         upload_tree = ast.parse(
-            (root / "modules" / "pipeline" / "upload.py").read_text(encoding="utf-8")
+            (root / "y2b" / "pipeline" / "upload.py").read_text(encoding="utf-8")
         )
 
         functions = {
             node.name: node
-            for tree in (app_tree, task_manager_tree, upload_tree)
+            for tree in (settings_tree, services_tree, task_manager_tree, upload_tree)
             for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name in {
@@ -115,7 +116,7 @@ class CookiePathResolutionTests(unittest.TestCase):
             self.assertEqual(os.path.normpath(resolved), os.path.normpath(str(legacy)))
 
     def test_settings_upload_uses_application_cookie_directory(self):
-        app_path = pathlib.Path(__file__).resolve().parents[1] / "app.py"
+        app_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "services.py"
         source = app_path.read_text(encoding="utf-8")
         module_ast = ast.parse(source, filename=str(app_path))
         function_node = next(
@@ -150,7 +151,10 @@ class CookiePathResolutionTests(unittest.TestCase):
             self.assertEqual(form_data["YOUTUBE_COOKIES_PATH"], "cookies/yt_cookies.txt")
 
     def test_browser_cookie_endpoints_use_application_cookie_directory(self):
-        app_source = (pathlib.Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+        app_root = pathlib.Path(__file__).resolve().parents[1] / "app"
+        app_source = "\n".join(
+            path.read_text(encoding="utf-8") for path in sorted(app_root.rglob("*.py"))
+        )
 
         self.assertGreaterEqual(app_source.count("cookies_dir = get_app_subdir('cookies')"), 3)
         self.assertNotIn(

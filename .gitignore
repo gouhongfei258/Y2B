@@ -28,7 +28,7 @@ qrcode.png
 
 # Downloads and generated content
 downloads/
-static/covers/
+frontend/static/covers/
 ffmpeg/
 
 # Database files
@@ -41,7 +41,7 @@ security/
 
 # Configuration and secrets
 config/*
-cookies/
+/cookies/
 *.key
 *.pem
 

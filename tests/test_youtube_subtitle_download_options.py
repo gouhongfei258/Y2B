@@ -5,7 +5,7 @@ from unittest import mock
 
 
 def _load_function(name):
-    module_path = pathlib.Path(__file__).resolve().parents[1] / "modules" / "youtube_handler.py"
+    module_path = pathlib.Path(__file__).resolve().parents[1] / "y2b" / "youtube" / "youtube_handler.py"
     source = module_path.read_text(encoding="utf-8")
     module_ast = ast.parse(source, filename=str(module_path))
     selected = [

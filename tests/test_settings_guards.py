@@ -458,7 +458,7 @@ class EmbedGateCopyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         template_path = (
-            pathlib.Path(__file__).resolve().parents[1] / 'templates' / 'settings.html'
+            pathlib.Path(__file__).resolve().parents[1] / 'frontend' / 'templates' / 'settings.html'
         )
         cls.doc = lxml_html.fromstring(template_path.read_text(encoding='utf-8'))
 
@@ -489,7 +489,7 @@ class NumericWhitelistControlCoverageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         template_path = (
-            pathlib.Path(__file__).resolve().parents[1] / 'templates' / 'settings.html'
+            pathlib.Path(__file__).resolve().parents[1] / 'frontend' / 'templates' / 'settings.html'
         )
         cls.source = template_path.read_text(encoding='utf-8')
         cls.doc = lxml_html.fromstring(cls.source)

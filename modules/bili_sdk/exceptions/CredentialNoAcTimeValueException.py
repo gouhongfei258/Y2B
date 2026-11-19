@@ -1,17 +1,11 @@
-"""
-bilibili_api.exceptions.CredentialNoAcTimeValue
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.CredentialNoAcTimeValueException."""
+import importlib
+import sys
 
-Credential 类未提供 ac_time_value 时的异常。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.CredentialNoAcTimeValueException"
 
-from .ApiException import ApiException
-
-
-class CredentialNoAcTimeValueException(ApiException):
-    """
-    Credential 类未提供 ac_time_value 时的异常。
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.msg = "Credential 类未提供 ac_time_value 或者为空。"
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

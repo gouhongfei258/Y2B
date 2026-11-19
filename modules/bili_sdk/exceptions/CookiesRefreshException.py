@@ -1,20 +1,11 @@
-"""
-bilibili_api.exceptions.CookiesRefreshException
+"""Compatibility shim for y2b.bilibili.bili_sdk.exceptions.CookiesRefreshException."""
+import importlib
+import sys
 
-Cookies 刷新错误。
-"""
+_TARGET = "y2b.bilibili.bili_sdk.exceptions.CookiesRefreshException"
 
-from .ApiException import ApiException
-
-
-class CookiesRefreshException(ApiException):
-    """
-    Cookies 刷新错误。
-    """
-
-    def __init__(self, msg: str = "Cookies 刷新错误。"):
-        super().__init__(msg)
-        self.msg = msg
-
-    def __str__(self):
-        return self.msg
+if __name__ == "__main__":
+    import runpy
+    runpy.run_module(_TARGET, run_name="__main__")
+else:
+    sys.modules[__name__] = importlib.import_module(_TARGET)

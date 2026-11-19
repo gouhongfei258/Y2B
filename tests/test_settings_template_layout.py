@@ -754,7 +754,7 @@ class SettingsTemplateLayoutTests(unittest.TestCase):
         # 模板里的 config.get('KEY', 字面量) 与 DEFAULT_CONFIG 分叉时,
         # 页面展示的默认值会与后端实际回退值不一致。
         template_source = (
-            pathlib.Path(__file__).resolve().parents[1] / 'templates' / 'settings.html'
+            pathlib.Path(__file__).resolve().parents[1] / 'frontend' / 'templates' / 'settings.html'
         ).read_text(encoding='utf-8')
         pattern = re.compile(r"config\.get\(\s*'([A-Z0-9_]+)'\s*,\s*([^)]+?)\s*\)")
         mismatched = {}

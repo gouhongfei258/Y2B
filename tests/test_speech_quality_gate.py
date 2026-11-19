@@ -1181,7 +1181,7 @@ class CheckpointGateConsistencyTests(unittest.TestCase):
         """
         source_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'modules', 'pipeline', 'upload.py')
+            'y2b', 'pipeline', 'upload.py')
         with open(source_path, encoding='utf-8') as handle:
             source = handle.read()
         start = source.index('def _prepare_subtitle_for_upload')
@@ -1307,9 +1307,9 @@ class QcResultDecisionPointTests(unittest.TestCase):
         source = '\n'.join(
             open(os.path.join(root, relative), encoding='utf-8').read()
             for relative in (
-                os.path.join('modules', 'task_manager.py'),
-                os.path.join('modules', 'subtitle', 'translate.py'),
-                os.path.join('modules', 'pipeline', 'upload.py'),
+                os.path.join('y2b', 'pipeline', 'task_manager.py'),
+                os.path.join('y2b', 'subtitles', 'translate.py'),
+                os.path.join('y2b', 'pipeline', 'upload.py'),
             )
         )
         inline_idiom = source.count('qc_result is True or qc_result is SUBTITLE_QC_DISABLED')

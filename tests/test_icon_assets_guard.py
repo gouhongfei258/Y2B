@@ -5,7 +5,7 @@
 图标字体对该类名没有任何 ::before 映射,<i> 标签于是渲染为零宽空白:
 既不报错、不占位,服务端也不会有任何日志,只能靠肉眼发现。
 
-当时内置的是 Bootstrap Icons v1.8.0(vendored 于 static/lib/icons)。全仓库
+当时内置的是 Bootstrap Icons v1.8.0(vendored 于 frontend/static/lib/icons)。全仓库
 扫描发现 bi-person-vcard、bi-floppy、bi-fire 共 4 处在用它没有的名字,这三个
 名字分别要到上游 v1.10.0 / v1.11.0 / v1.9.0 才出现。修复时先把它们换成
 v1.8.0 里已有的等价图标,随后内置图标集整体升级到 v1.13.1(CSS 顶部带版本
@@ -29,15 +29,15 @@ import unittest
 import zlib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-ICON_CSS = REPO_ROOT / 'static' / 'lib' / 'icons' / 'bootstrap-icons.css'
+ICON_CSS = REPO_ROOT / 'frontend' / 'static' / 'lib' / 'icons' / 'bootstrap-icons.css'
 FONT_DIR = ICON_CSS.parent / 'fonts'
 
 # 图标类名的来源:后端模板 + (未经过打包的)前端脚本。
 # 这些文件里的图标名全部是字面量,因此可以静态扫描——若将来出现
 # 动态拼接的类名(如 `'bi-' + name`),扫描会漏掉它们,届时需要另行处理。
 SOURCE_DIRS = (
-    (REPO_ROOT / 'templates', '*.html'),
-    (REPO_ROOT / 'static' / 'js', '*.js'),
+    (REPO_ROOT / 'frontend' / 'templates', '*.html'),
+    (REPO_ROOT / 'frontend' / 'static' / 'js', '*.js'),
 )
 
 # 同时匹配 <i class="bi bi-x"> 与 class="... bi bi-x ..." 两种写法;
@@ -203,7 +203,7 @@ class IconAssetsGuardTests(unittest.TestCase):
             relative = path.relative_to(REPO_ROOT).as_posix()
             for match in STATIC_ASSET_RE.finditer(text):
                 asset = match.group(1)
-                if not (REPO_ROOT / 'static' / asset).is_file():
+                if not (REPO_ROOT / 'frontend' / 'static' / asset).is_file():
                     line = text.count('\n', 0, match.start()) + 1
                     missing.append(f'{relative}:{line} -> static/{asset}')
         self.assertEqual(
@@ -213,7 +213,7 @@ class IconAssetsGuardTests(unittest.TestCase):
     def test_账号与登录处的图标可渲染(self):
         # Issue #150 的现场。这里不钉死具体图标名(升级图标集后可以自由更换),
         # 只要求「账号与登录」的导航项与汇总卡片各有一个图标,且它真的能渲染出来。
-        source = (REPO_ROOT / 'templates' / 'settings.html').read_text(encoding='utf-8')
+        source = (REPO_ROOT / 'frontend' / 'templates' / 'settings.html').read_text(encoding='utf-8')
         for label, anchor in (('导航项', r'id="vtab-accounts-tab"'),
                               ('汇总卡片', r'data-settings-target="#vtab-accounts"')):
             match = re.search(
