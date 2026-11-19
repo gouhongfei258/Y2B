@@ -27,7 +27,7 @@ from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
 
 from y2b.utils import normalize_openai_base_url, normalize_reasoning_effort
 
-logger = logging.getLogger("modules.ai_fallback_client")
+logger = logging.getLogger("y2b.ai.ai_fallback_client")
 
 # 兜底端点字段；统一客户端需要在所有调用路径上可靠拿到它们。
 FALLBACK_KEYS = (
@@ -292,7 +292,7 @@ class _ChatProxy:
 class _FallbackEndpointClient:
     """Expose one concrete failover endpoint to the request adaptation layer.
 
-    ``modules.utils`` needs the endpoint identity before it builds a request
+    ``y2b.utils`` needs the endpoint identity before it builds a request
     (thinking controls and compatibility actions are endpoint-specific).  The
     public ``FallbackChatClient`` cannot provide that identity because the
     endpoint is selected only after the request starts.  This small proxy

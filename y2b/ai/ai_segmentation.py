@@ -1306,7 +1306,7 @@ def _parse_cues_response(
     # Reject oversized arrays atomically; truncation could silently discard source text.
     max_allowed = max(8, max(0, int(input_count)) * 2 + 4)
     if len(raw_cues) > max_allowed:
-        logging.getLogger("modules.ai_segmentation").warning(
+        logging.getLogger("y2b.ai.ai_segmentation").warning(
             '段级 AI 输出 cue 数量超限 (%d > %d)，整批拒绝并降级',
             len(raw_cues), max_allowed,
         )
@@ -1349,7 +1349,7 @@ def _parse_cues_response(
         else:
             spans = _boundaries_to_spans(sorted({round(float(b), 3) for b in input_boundaries}))
         cleaned = _interpolate_segment_cues(
-            cleaned, spans, logging.getLogger("modules.ai_segmentation"),
+            cleaned, spans, logging.getLogger("y2b.ai.ai_segmentation"),
         )
         if not cleaned:
             return []
@@ -1376,7 +1376,7 @@ def _parse_cues_response(
             if input_boundaries:
                 # 吸附模式下不做截断：截断会把 start_s 推到非边界值，
                 # 违反"时间必须取自输入段边界"的契约 → 整批拒绝并降级
-                logging.getLogger("modules.ai_segmentation").warning(
+                logging.getLogger("y2b.ai.ai_segmentation").warning(
                     '段级 AI 输出时间重叠: [%.3f, %.3f] 与上一条 end=%.3f 冲突，整批拒绝并降级',
                     c['start_s'], c['end_s'], deduped[-1]['end_s'],
                 )
@@ -2107,7 +2107,7 @@ class AISegmenter:
 
     def __init__(self, config: AISegmentationConfig, logger=None):
         self.config = config
-        self.logger = logger or logging.getLogger("modules.ai_segmentation")
+        self.logger = logger or logging.getLogger("y2b.ai.ai_segmentation")
         # 降级可观测：每次 segment() 重置并累计，供上层读取（不改变返回值类型）
         self.last_degradation_stats: Dict[str, int] = {
             'word_level': 0, 'segment_level': 0, 'baseline': 0, 'rejected': 0,
@@ -2567,7 +2567,7 @@ def srt_to_asr_results(
     """
     from y2b.subtitles.srt_transform_engine import SrtTransformEngine, SrtTransformConfig
 
-    _logger = logger or logging.getLogger("modules.ai_segmentation")
+    _logger = logger or logging.getLogger("y2b.ai.ai_segmentation")
 
     try:
         with open(srt_path, encoding='utf-8') as f:
@@ -2628,7 +2628,7 @@ def resegment_srt_file(
     """
     from y2b.subtitles.srt_transform_engine import SrtTransformEngine, SrtTransformConfig
 
-    _logger = logger or logging.getLogger("modules.ai_segmentation")
+    _logger = logger or logging.getLogger("y2b.ai.ai_segmentation")
 
     try:
         results = srt_to_asr_results(srt_path, _logger)

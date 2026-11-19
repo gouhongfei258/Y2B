@@ -51,7 +51,7 @@ class VadProcessor:
 
     def __init__(self, config: VadConfig, logger: Optional[logging.Logger] = None):
         self.config = config
-        self.logger = logger or logging.getLogger("modules.vad_processor")
+        self.logger = logger or logging.getLogger("y2b.ai.vad_processor")
         self._temp_dirs: List[str] = []
         self.last_result_state: str = 'unknown'
         self.last_failure_reason: str = ''

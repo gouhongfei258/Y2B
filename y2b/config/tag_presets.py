@@ -23,13 +23,13 @@ import logging
 import re
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
-logger = logging.getLogger("modules.tag_presets")
+logger = logging.getLogger("y2b.config.tag_presets")
 
-#: AcFun 标签数量上限（见 modules/acfun_uploader.py 上传前的截断）
+#: AcFun 标签数量上限（见 y2b/acfun/acfun_uploader.py 上传前的截断）
 ACFUN_TAG_LIMIT = 6
-#: AcFun 单标签字数上限（与 modules/ai_enhancer.py 生成标签时的截断口径一致）
+#: AcFun 单标签字数上限（与 y2b/ai/ai_enhancer.py 生成标签时的截断口径一致）
 ACFUN_TAG_MAX_LEN = 10
-#: bilibili 标签数量上限（见 modules/bilibili_uploader.py:271-272）
+#: bilibili 标签数量上限（见 y2b/bilibili/bilibili_uploader.py:271-272）
 BILIBILI_TAG_LIMIT = 12
 #: bilibili 单标签字数上限
 BILIBILI_TAG_MAX_LEN = 20

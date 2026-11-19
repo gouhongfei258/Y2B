@@ -94,7 +94,6 @@ def create_spec_file():
     candidate_datas = [
         ('../frontend/templates', 'frontend/templates'),
         ('../frontend/static', 'frontend/static'),
-        ('../modules', 'modules'),
         ('../y2b', 'y2b'),
         ('../app', 'app'),
         ('../acfunid', 'acfunid'),
@@ -132,7 +131,7 @@ hiddenimports = [
     'apscheduler',
 
     # 项目内部模块（运行时懒加载，显式收集以免冻结环境缺失）
-    'modules.tools.convert_cookies',
+    'y2b.cookies.convert_cookies',
     
     # Flask相关
     'flask_cors',

@@ -3,7 +3,7 @@
 """任务取消标记与活动线程登记。
 
 这些状态在进程内只有一份。task_manager 再导出同名对象，调用方和测试继续从
-modules.task_manager 访问。
+y2b.pipeline.task_manager 访问。
 """
 
 import threading

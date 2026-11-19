@@ -25,7 +25,7 @@ from shutil import which as _which
 from y2b.config.config_manager import load_config
 from y2b.utils import get_app_root_dir
 
-log = logging.getLogger("modules.ffmpeg_manager")
+log = logging.getLogger("y2b.media.ffmpeg_manager")
 
 
 _BINARY_CACHE: dict[str, Optional[str]] = {"ffmpeg": None, "ffprobe": None}

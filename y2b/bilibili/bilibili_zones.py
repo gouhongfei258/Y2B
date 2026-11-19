@@ -12,8 +12,8 @@ logger = logging.getLogger("bilibili_zones")
 def get_zone_list_sub() -> List[dict]:
     configure_bilibili_runtime()
     try:
-        # modules.bili_sdk is the compatibility alias tests replace in sys.modules.
-        from modules.bili_sdk import video_zone
+        # 延迟导入，测试通过 sys.modules 替换 y2b.bilibili.bili_sdk。
+        from y2b.bilibili.bili_sdk import video_zone
         return video_zone.get_zone_list_sub() or []
     except Exception as exc:
         logger.warning("读取bilibili分区数据失败: %s", exc)

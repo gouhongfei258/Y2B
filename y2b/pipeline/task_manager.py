@@ -47,7 +47,7 @@ from werkzeug.security import safe_join
 
 
 # 从 task_manager 拆出的实现。这里再导出公开名字，既有
-# `from modules.task_manager import add_task, TaskProcessor` 保持可用。
+# `from y2b.pipeline.task_manager import add_task, TaskProcessor` 保持可用。
 from y2b.pipeline.cancel import (
     TaskCancelledError,
     _ACTIVE_TASK_IDS,
@@ -110,10 +110,10 @@ from y2b.subtitles.translate import SubtitleTranslationMixin
 
 # 导入其他模块
 # 这些导入会在函数内部使用，避免循环导入问题
-# from modules.youtube_handler import download_video_data
-# from modules.ai_enhancer import translate_video_metadata, generate_acfun_tags, recommend_acfun_partition
-# from modules.content_moderator import AlibabaCloudModerator
-# from modules.acfun_uploader import AcfunUploader
+# from y2b.youtube.youtube_handler import download_video_data
+# from y2b.ai.ai_enhancer import translate_video_metadata, generate_acfun_tags, recommend_acfun_partition
+# from y2b.moderation.content_moderator import AlibabaCloudModerator
+# from y2b.acfun.acfun_uploader import AcfunUploader
 
 def _get_memory_usage_percent():
     """获取系统内存使用百分比，用于内存感知处理"""

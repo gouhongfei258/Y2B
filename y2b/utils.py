@@ -324,7 +324,7 @@ _OPENAI_COMPATIBILITY_CACHE_MAX = 256
 _OPENAI_COMPATIBILITY_CACHE_TTL_SECONDS = 3600
 _OPENAI_COMPATIBILITY_WARNED = set()
 _OPENAI_COMPATIBILITY_LOCK = threading.Lock()
-_OPENAI_URL_LOGGER = logging.getLogger("modules.utils")
+_OPENAI_URL_LOGGER = logging.getLogger("y2b.utils")
 
 # 端点级“某一种思考开关形态不可用”的缓存前缀。与 drop_thinking 区分：
 # 前者只跳过被拒绝的形态，仍会尝试下一种；后者才是彻底放弃关闭思考。

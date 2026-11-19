@@ -36,7 +36,7 @@ ADVISORY_MODE_HARD_FAIL_REASONS = {
 # 纯音乐段的视频，正常覆盖率也可能只有 20–30%。因此硬失败线定得低，
 # 可疑线负责把边界情况交给 AI 复核。
 # 这些数值是**兜底默认**：真实取值由 SPEECH_PIPELINE_DEFAULTS / DEFAULT_CONFIG
-# 的 SUBTITLE_QC_* 键提供（可在设置页调整），二者由 tests/test_subtitle_qc_timeline.py
+# 的 SUBTITLE_QC_* 键提供（可在设置页调整），二者由 tests/subtitles/test_subtitle_qc_timeline.py
 # 的一致性用例锁死，避免再次出现「两套默认值分叉」。
 TIMELINE_MIN_COVERAGE_RATIO = 0.15          # cue 时长并集 / 视频时长（低于此值视为未覆盖全片）
 TIMELINE_SUSPICIOUS_COVERAGE_RATIO = 0.35

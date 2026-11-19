@@ -396,7 +396,7 @@ def get_openai_client(openai_config):
     """
     创建OpenAI客户端 (与ai_enhancer.py保持一致)
 
-    统一走 modules.ai_fallback_client.get_ai_client，主端点（OPENAI_*）不可用时
+    统一走 y2b.ai.ai_fallback_client.get_ai_client，主端点（OPENAI_*）不可用时
     自动切换到 FALLBACK_OPENAI_* 兜底端点；未配置兜底则退化为单端点，行为不变。
 
     Args:

@@ -2,13 +2,13 @@
 /*
  * 在「最小 DOM 桩」里真实执行设置页的字段级搜索脚本。
  *
- * 为什么需要它：tests/test_settings_template_layout.py 全是静态字符串断言，
+ * 为什么需要它：tests/app/test_settings_template_layout.py 全是静态字符串断言，
  * 抓不到渲染后 JS 的运行时行为。历史上出现过这类回归 —— renderResults() 开头
  * 会把 activeIndex 重置为 -1，而 runSearch() 在它之后才读取该下标，于是
  * 「方向键选中某项后按 Enter」恒跳到第一条（选中态画得出来，但 Enter 不认）。
  *
  * 用法：node tests/js/settings_search_keyboard.js <提取出的JS文件>
- *   输入文件由 tests/test_settings_search_keyboard.py 从渲染后的 /settings 页面提取，
+ *   输入文件由 tests/app/test_settings_search_keyboard.py 从渲染后的 /settings 页面提取，
  *   内容为「共享标签辅助函数 + 字段级搜索脚本」两段真实源码。
  * 输出：单行 JSON（stdout）。夹具与期望值都放在本文件里，便于与断言对照。
  */

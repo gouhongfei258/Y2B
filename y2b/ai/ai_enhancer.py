@@ -161,7 +161,7 @@ def get_openai_client(openai_config):
     """
     创建OpenAI客户端。
 
-    统一走 modules.ai_fallback_client.get_ai_client，主端点（OPENAI_*）不可用时
+    统一走 y2b.ai.ai_fallback_client.get_ai_client，主端点（OPENAI_*）不可用时
     自动切换到 FALLBACK_OPENAI_* 兜底端点；未配置兜底则退化为单端点，行为不变。
     """
     from y2b.ai.ai_fallback_client import get_ai_client
@@ -485,7 +485,7 @@ def _build_metadata_translation_system_prompt(target_language: str, retry: bool 
         try:
             mode, user_text = read_prompt_config_from_app_config(openai_config, 'METADATA_TRANSLATE')
         except Exception as exc:
-            logging.getLogger("modules.ai_enhancer").debug("读取 Prompt 配置失败（METADATA_TRANSLATE），将回退 builtin: %s", exc)
+            logging.getLogger("y2b.ai.ai_enhancer").debug("读取 Prompt 配置失败（METADATA_TRANSLATE），将回退 builtin: %s", exc)
     prompt = get_metadata_translate_prompt(
         mode=mode,
         user_text=user_text,
@@ -513,7 +513,7 @@ def _build_description_retry_system_prompt(target_language: str, openai_config=N
         try:
             mode, user_text = read_prompt_config_from_app_config(openai_config, 'METADATA_DESC_RETRY')
         except Exception as exc:
-            logging.getLogger("modules.ai_enhancer").debug("读取 Prompt 配置失败（METADATA_DESC_RETRY），将回退 builtin: %s", exc)
+            logging.getLogger("y2b.ai.ai_enhancer").debug("读取 Prompt 配置失败（METADATA_DESC_RETRY），将回退 builtin: %s", exc)
     return get_metadata_desc_retry_prompt(
         mode=mode,
         user_text=user_text,
@@ -2005,7 +2005,7 @@ def _recommend_partition_core(
     include_cover_for_ai: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
     openai_config = openai_config or {}
-    logger = logger or logging.getLogger("modules.ai_enhancer")
+    logger = logger or logging.getLogger("y2b.ai.ai_enhancer")
     metadata = _build_partition_metadata(
         title=title,
         description=description,

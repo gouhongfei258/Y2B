@@ -3,7 +3,7 @@
 """任务 SQLite 存储。
 
 只包含连接、初始化和 tasks 表的读写。调度、上传、字幕和转码不在这里。
-跨模块协作通过 _public() 回到 modules.task_manager，这样既有的
+跨模块协作通过 _public() 回到 y2b.pipeline.task_manager，这样既有的
 ``patch.object(task_manager, "get_db_connection")`` 仍然作用在真实调用上。
 """
 

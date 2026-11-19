@@ -115,7 +115,7 @@ _VIDEO_CPU_PRESETS = (
 _VIDEO_CPU_PRESET_DEFAULT = 'medium'
 _VIDEO_CPU_PRESET_HD_DEFAULT = 'veryfast'
 # CPU 软编码器取值。与 VIDEO_ENCODER（硬件编码器选择器）正交，见
-# modules/video_encoder_params.py 中 _VALID_CPU_CODECS 的说明。
+# y2b/media/video_encoder_params.py 中 _VALID_CPU_CODECS 的说明。
 _VIDEO_CPU_CODECS = ('x264', 'x265')
 _VIDEO_CPU_CODEC_DEFAULT = 'x264'
 
@@ -179,7 +179,7 @@ DEFAULT_CONFIG = {
     "YOUTUBE_UPLOADER_AS_FIRST_TAG": False,
     # 预设标签（Issue #139）：启用后人工预设的标签排在任务标签之前，AI 只补齐剩余名额；
     # 一份预设同时服务 AcFun 与 bilibili，落平台时按各平台上限截断
-    # （见 modules/tag_presets.py）。PRESET_TAGS 每行一个，也接受逗号/顿号/分号分隔。
+    # （见 y2b/config/tag_presets.py）。PRESET_TAGS 每行一个，也接受逗号/顿号/分号分隔。
     "PRESET_TAGS_ENABLED": False,
     "PRESET_TAGS": "",
     "RECOMMEND_PARTITION": False,
