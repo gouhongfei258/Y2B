@@ -12,6 +12,8 @@ import os
 import shutil
 import unicodedata
 
+from y2b.utils import get_subtitle_fonts_dir
+
 logger = logging.getLogger("task_manager")
 
 
@@ -28,7 +30,6 @@ def _facade_call(name):
 parse_style_overrides = _facade_call("parse_style_overrides")
 apply_style_overrides = _facade_call("apply_style_overrides")
 diagnose_style = _facade_call("diagnose_style")
-get_app_subdir = _facade_call("get_app_subdir")
 
 
 class SubtitleLayoutMixin:
@@ -1950,7 +1951,7 @@ class SubtitleLayoutMixin:
 
     @classmethod
     def _iter_bundled_font_paths(cls):
-        fonts_dir = get_app_subdir('fonts')
+        fonts_dir = get_subtitle_fonts_dir()
         if not os.path.isdir(fonts_dir):
             return []
         font_paths = []

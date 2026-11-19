@@ -1,10 +1,9 @@
 """Flask application factory."""
 import os
-import sys
 
 from flask import Flask
 
-from y2b.utils import get_app_root_dir
+from y2b.utils import locate_bundled_dir
 
 _BLUEPRINTS = (
     "auth",
@@ -21,23 +20,8 @@ app = None
 
 
 def frontend_dir(kind: str) -> str:
-    """Locate frontend/templates or frontend/static in dev, Docker, and frozen builds."""
-    roots = []
-    if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            roots.append(meipass)
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        roots.append(exe_dir)
-        roots.append(os.path.join(exe_dir, "_internal"))
-    roots.append(get_app_root_dir())
-    fallback = os.path.join(get_app_root_dir(), "frontend", kind)
-    for root in roots:
-        candidate = os.path.join(root, "frontend", kind)
-        fallback = candidate
-        if os.path.isdir(candidate):
-            return candidate
-    return fallback
+    """Locate frontend/templates, frontend/static, or frontend/fonts in dev, Docker, and frozen builds."""
+    return locate_bundled_dir("frontend", kind)
 
 
 def _load_source(filename: str) -> None:
