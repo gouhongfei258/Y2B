@@ -105,7 +105,7 @@ def main() -> int:
     parser.add_argument(
         "--font",
         default="NotoSansCJKsc-Regular.otf",
-        help="字体文件名（需存在于 ffmpeg/fonts/ 或系统字体目录）",
+        help="ASS 字体名（默认文件名对应 frontend/fonts/ 中的内置字体，也可使用系统字体）",
     )
     parser.add_argument(
         "--outdir",

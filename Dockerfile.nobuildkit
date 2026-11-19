@@ -155,7 +155,8 @@ COPY --from=builder /root/.local /home/y2a/.local
 COPY --from=ffmpeg-builder /ffmpeg-out/ffmpeg /app/ffmpeg/bin/ffmpeg
 COPY --from=ffmpeg-builder /ffmpeg-out/ffprobe /app/ffmpeg/bin/ffprobe
 
-# 复制应用代码
+# 复制应用代码。内置数据随整仓进入镜像：
+# y2b/acfun/acfunid/id_mapping.json（AcFun 分区映射）、frontend/fonts/（字幕烧录字体）。
 COPY --chown=y2a:y2a . .
 
 # 创建必要的目录和符号链接，设置权限

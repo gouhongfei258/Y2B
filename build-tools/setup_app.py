@@ -101,7 +101,7 @@ def setup_environment():
     # 创建必要的目录
     directories = [
         "config", "db", "downloads", "logs", 
-        "cookies", "temp", "acfunid", "fonts"
+        "cookies", "temp"
     ]
     
     for directory in directories:

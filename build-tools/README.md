@@ -94,7 +94,7 @@ dist/Y2A-Auto/
 ├── logs/                  # 日志文件目录
 ├── cookies/               # Cookie文件目录
 ├── temp/                  # 临时文件目录
-└── acfunid/               # AcFun ID缓存目录
+└── y2b/acfun/acfunid/     # AcFun 分区映射（id_mapping.json）
 ```
 
 ## 🔧 构建选项

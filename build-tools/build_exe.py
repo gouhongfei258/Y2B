@@ -94,10 +94,9 @@ def create_spec_file():
     candidate_datas = [
         ('../frontend/templates', 'frontend/templates'),
         ('../frontend/static', 'frontend/static'),
+        ('../frontend/fonts', 'frontend/fonts'),
         ('../y2b', 'y2b'),
         ('../app', 'app'),
-        ('../acfunid', 'acfunid'),
-        ('../fonts', 'fonts'),
         ('../app.py', '.'),
     ]
 
@@ -301,13 +300,14 @@ def build_executable():
         sys.exit(1)
 
 def copy_id_mapping_file():
-    """复制id_mapping.json文件到打包目录"""
-    source_file = '../acfunid/id_mapping.json'
-    target_file = 'dist/Y2A-Auto/acfunid/id_mapping.json'
+    """复制 id_mapping.json 到便携包中的 AcFun 分区映射目录。"""
+    source_file = '../y2b/acfun/acfunid/id_mapping.json'
+    target_file = 'dist/Y2A-Auto/y2b/acfun/acfunid/id_mapping.json'
     
     try:
         if os.path.exists(source_file):
             import shutil
+            os.makedirs(os.path.dirname(target_file), exist_ok=True)
             shutil.copy2(source_file, target_file)
             print(f"✓ 复制id_mapping.json文件: {target_file}")
         else:
@@ -330,7 +330,7 @@ def create_portable_package():
         'dist/Y2A-Auto/logs',
         'dist/Y2A-Auto/cookies',
         'dist/Y2A-Auto/temp',
-        'dist/Y2A-Auto/acfunid',
+        'dist/Y2A-Auto/y2b/acfun/acfunid',
     ]
     
     for dir_path in dirs_to_create:
@@ -422,7 +422,7 @@ Y2A-Auto/
 ├── logs/               # 日志文件
 ├── cookies/            # Cookie文件
 ├── temp/               # 临时文件
-└── acfunid/            # AcFun ID缓存
+└── y2b/acfun/acfunid/  # AcFun 分区映射
 ```
 
 ## 功能特性

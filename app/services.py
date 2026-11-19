@@ -22,7 +22,12 @@ from flask_cors import CORS
 from PIL import Image, UnidentifiedImageError
 from werkzeug.security import safe_join
 from y2b.youtube.youtube_handler import extract_video_urls_from_playlist, normalize_youtube_url
-from y2b.utils import get_app_root_dir, get_app_subdir, normalize_reasoning_effort
+from y2b.utils import (
+    get_acfun_id_mapping_path,
+    get_app_root_dir,
+    get_app_subdir,
+    normalize_reasoning_effort,
+)
 from y2b.config.config_manager import load_config, update_config, reset_specific_config, DEFAULT_CONFIG, AI_REASONING_EFFORT_KEYS
 from y2b.ai.whisper_languages import WHISPER_LANGUAGE_LIST
 from y2b.subtitles.subtitle_style import normalize_hex_color
@@ -1885,10 +1890,10 @@ logger.setLevel(logging.WARNING)
 def init_id_mapping():
     """
     初始化AcFun分区ID映射.
-    id_mapping.json 文件现在应该由 acfunid/ 目录直接提供，并包含在Docker镜像中。
+    id_mapping.json 由 y2b/acfun/acfunid/ 提供，并随应用代码进入 Docker 镜像。
     此函数仅记录一条信息，不再执行文件生成或检查逻辑。
     """
-    logger.info("AcFun分区ID映射 (id_mapping.json) 应由 'acfunid/' 目录提供。")
+    logger.info("AcFun分区ID映射 (id_mapping.json) 应由 'y2b/acfun/acfunid/' 目录提供。")
 
 # 模板辅助函数
 def task_status_display(status):
@@ -1941,7 +1946,7 @@ def _get_bilibili_zone_data():
 
 
 def _load_acfun_partition_mapping():
-    id_mapping_path = os.path.join(get_app_subdir('acfunid'), 'id_mapping.json')
+    id_mapping_path = get_acfun_id_mapping_path()
     try:
         with open(id_mapping_path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -2000,7 +2005,7 @@ def get_partition_name(partition_id, upload_target='acfun'):
         return None
 
     # 默认 AcFun
-    id_mapping_path = os.path.join(get_app_subdir('acfunid'), 'id_mapping.json')
+    id_mapping_path = get_acfun_id_mapping_path()
     try:
         with open(id_mapping_path, 'r', encoding='utf-8') as f:
             id_mapping = json.load(f)

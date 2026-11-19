@@ -2804,8 +2804,8 @@ class TaskProcessor(
                 task_logger.error(f"读取bilibili分区数据失败: {e}")
 
         if UPLOAD_TARGET_ACFUN in targets_to_recommend:
-            from y2b.utils import get_app_subdir
-            id_mapping_path = os.path.join(get_app_subdir('acfunid'), 'id_mapping.json')
+            from y2b.utils import get_acfun_id_mapping_path
+            id_mapping_path = get_acfun_id_mapping_path()
             task_logger.info(f"尝试读取 AcFun 分区映射文件: {id_mapping_path}")
             try:
                 if not os.path.exists(id_mapping_path):

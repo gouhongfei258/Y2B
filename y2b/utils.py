@@ -35,6 +35,45 @@ def get_app_subdir(subdir_name):
     """
     return os.path.join(get_app_root_dir(), subdir_name)
 
+
+def locate_bundled_dir(*relative_parts):
+    """Locate a read-only bundled directory in dev, Docker, and frozen builds.
+
+    PyInstaller onedir builds place datas in ``sys._MEIPASS`` (the ``_internal``
+    directory on PyInstaller 6, or the executable directory on older releases).
+    Dev and Docker keep the same relative path under the repository root.
+    """
+    roots = []
+    if getattr(sys, 'frozen', False):
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            roots.append(meipass)
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        roots.append(exe_dir)
+        roots.append(os.path.join(exe_dir, '_internal'))
+    roots.append(get_app_root_dir())
+
+    fallback = os.path.join(get_app_root_dir(), *relative_parts)
+    for root in roots:
+        candidate = os.path.join(root, *relative_parts)
+        fallback = candidate
+        if os.path.isdir(candidate):
+            return candidate
+    return fallback
+
+
+def get_acfun_id_mapping_path():
+    """Bundled AcFun partition map: y2b/acfun/acfunid/id_mapping.json."""
+    return os.path.join(
+        locate_bundled_dir('y2b', 'acfun', 'acfunid'),
+        'id_mapping.json',
+    )
+
+
+def get_subtitle_fonts_dir():
+    """Bundled subtitle burn-in fonts: frontend/fonts/."""
+    return locate_bundled_dir('frontend', 'fonts')
+
 import re
 import copy
 import json

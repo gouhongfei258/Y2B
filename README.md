@@ -111,15 +111,14 @@ Y2A-Auto/
 ├── app/                   # Flask 工厂、Blueprints、请求处理
 ├── frontend/
 │   ├── templates/
-│   └── static/
-├── y2b/                   # 业务代码（pipeline、media、subtitles、youtube、bilibili、acfun、ai、…）
+│   ├── static/
+│   └── fonts/             # 字幕烧录字体
+├── y2b/                   # pipeline、media、subtitles、youtube、bilibili、acfun、ai；分区映射在 acfun/acfunid/
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker-compose-build.yml
-├── acfunid/
 ├── build-tools/
-├── fonts/
 └── tests/                 # 与 y2b/、app/ 对应的领域目录
     ├── ai/  app/  bilibili/  config/  cookies/
     ├── js/  media/  moderation/  pipeline/
@@ -152,7 +151,7 @@ docker compose up -d
 
 默认会持久化目录：`config/`、`db/`、`downloads/`、`logs/`、`temp/`、`cookies/`。
 
-说明：`fonts/` 中的字体属于项目内置依赖，用于字幕烧录；许可证见 `fonts/LICENSE.txt`。
+说明：`frontend/fonts/` 中的字体属于项目内置依赖，用于字幕烧录；许可证见 `frontend/fonts/LICENSE.txt`。
 
 ## 部署与运行
 
@@ -463,8 +462,8 @@ QC 会先用规则做硬拦截，只有边界样本才会调用 AI 严格复核�
 ## 内置字幕字体
 
 - 项目默认内置 `SourceHanSansHWSC-VF.otf`，作为字幕烧录依赖随仓库一起分发
-- 可通过 `SUBTITLE_FONT_NAME` 指定 `fonts/` 目录中的字体文件名；程序会读取该文件的真实字体名供 libass 使用
-- 字体许可证位于 `fonts/LICENSE.txt`
+- 可通过 `SUBTITLE_FONT_NAME` 指定 `frontend/fonts/` 目录中的字体文件名；程序会读取该文件的真实字体名供 libass 使用
+- 字体许可证位于 `frontend/fonts/LICENSE.txt`
 
 ## 使用指南
 
