@@ -35,23 +35,23 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from modules.bili_sdk import login_v2  # noqa: E402
-from modules.bili_sdk.exceptions import (  # noqa: E402
+from y2b.bilibili.bili_sdk import login_v2  # noqa: E402
+from y2b.bilibili.bili_sdk.exceptions import (  # noqa: E402
     NetworkException,
     ResponseCodeException,
 )
-from modules.bili_sdk.utils.network import Api, Credential, get_api  # noqa: E402
-from modules.bili_sdk.video_uploader import (  # noqa: E402
+from y2b.bilibili.bili_sdk.utils.network import Api, Credential, get_api  # noqa: E402
+from y2b.bilibili.bili_sdk.video_uploader import (  # noqa: E402
     VideoUploader,
     VideoUploaderPage,
     normalize_submit_api,
 )
-from modules.bilibili_auth import (  # noqa: E402
+from y2b.bilibili.bilibili_auth import (  # noqa: E402
     load_credential_from_file,
     save_credential_to_file,
     validate_credential_remote,
 )
-from modules.bilibili_runtime import configure_bilibili_runtime  # noqa: E402
+from y2b.bilibili.bilibili_runtime import configure_bilibili_runtime  # noqa: E402
 
 DEFAULT_COOKIE = os.path.join(ROOT, "cookies", "bili_cookies.json")
 
@@ -81,7 +81,7 @@ def _err_text(err: Exception) -> str:
 
 
 def _client():
-    from modules.bili_sdk.utils.network import get_client
+    from y2b.bilibili.bili_sdk.utils.network import get_client
 
     return get_client()
 
@@ -156,7 +156,7 @@ async def stage_auth(cookie_path: str) -> int:
 # -------------------------------------------------------------------- preupload
 async def stage_preupload(credential: Credential, size: int = 1_048_576) -> int:
     configure_bilibili_runtime()
-    from modules.bili_sdk.utils.network import HEADERS
+    from y2b.bilibili.bili_sdk.utils.network import HEADERS
 
     scenarios = [
         (

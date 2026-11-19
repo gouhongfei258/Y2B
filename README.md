@@ -113,7 +113,6 @@ Y2A-Auto/
 │   ├── templates/
 │   └── static/
 ├── y2b/                   # 业务代码（pipeline、media、subtitles、youtube、bilibili、acfun、ai、…）
-├── modules/               # 兼容层，把旧的 modules.* 导入转到 y2b
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -121,7 +120,10 @@ Y2A-Auto/
 ├── acfunid/
 ├── build-tools/
 ├── fonts/
-└── tests/
+└── tests/                 # 与 y2b/、app/ 对应的领域目录
+    ├── ai/  app/  bilibili/  config/  cookies/
+    ├── js/  media/  moderation/  pipeline/
+    └── subtitles/  youtube/
 ```
 
 运行时数据目录仍在仓库根下：`config/`、`cookies/`、`db/`、`downloads/`、`logs/`、`temp/`。
@@ -628,7 +630,7 @@ ssh -N -L 5000:127.0.0.1:5000 -o ServerAliveInterval=30 user@<服务器公网IP>
 - [FFmpeg](https://ffmpeg.org/)
 - [Flask](https://flask.palletsprojects.com/)
 - Bilibili 平台上传的技术参考资料
-  - 项目内的 `y2b/bilibili/bili_sdk`（兼容路径 `modules/bili_sdk`）部分参考了社区开源项目，针对上传流程做了适配。
+  - 项目内的 `y2b/bilibili/bili_sdk` 部分参考了社区开源项目，针对上传流程做了适配。
 - [OpenAI](https://openai.com/)
 
 ## 许可证

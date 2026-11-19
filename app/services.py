@@ -932,7 +932,7 @@ def _build_settings_progress_reporter(operation_id: str | None):
 #   - 复选框若不在表单数据里就会被当作未勾选，所以"UI 有开关但漏登记"会让该开关永远无法关闭；
 #     反之"登记了但 UI 没有控件"会让该键在每次保存时被强制写成 off。
 #   - 数值字段用于类型归一化，非法值回退到 DEFAULT_CONFIG 中的默认值。
-# tests/test_settings_template_layout.py 会断言模板控件与这些集合一致。
+# tests/app/test_settings_template_layout.py 会断言模板控件与这些集合一致。
 SETTINGS_CHECKBOX_FIELDS = list(dict.fromkeys([
     'AUTO_MODE_ENABLED', 'TRANSLATE_TITLE', 'TRANSLATE_DESCRIPTION',
     'UPLOAD_APPEND_REPOST_NOTICE', 'DELETE_DOWNLOAD_FILES_AFTER_UPLOAD',
@@ -1046,7 +1046,7 @@ SETTINGS_RANGE_GUARDS = (
     ('SUBTITLE_TRANSLATION_MAX_CHARS_PER_BATCH', 200.0, 20000.0),
     ('WHISPER_TEMPERATURE', 0.0, 1.0),
     ('WHISPER_NO_SPEECH_THRESHOLD', 0.0, 1.0),
-    # 质检时间轴阈值：modules/subtitle_qc.py 直接采信这三个键，超出物理含义的值
+    # 质检时间轴阈值：y2b/subtitles/subtitle_qc.py 直接采信这三个键，超出物理含义的值
     # （覆盖率比值 > 1、负的空档秒数）会让整条质检线恒失败，必须挡在配置层。
     ('SUBTITLE_QC_MIN_COVERAGE_RATIO', 0.0, 1.0),
     ('SUBTITLE_QC_MAX_GAP_S', 1.0, 3600.0),
@@ -1347,7 +1347,7 @@ def _perform_settings_save(form_data: dict, uploads: dict, operation_id: str | N
                     allowed=_format_guard_range(_guard_min, _guard_max),
                 )
 
-        # 交叉约束：分片重叠必须严格小于分片窗口。modules/speech_recognition.py 的
+        # 交叉约束：分片重叠必须严格小于分片窗口。y2b/ai/speech_recognition.py 的
         # _create_audio_chunks 每片前进 (window - overlap) 秒，overlap >= window 时
         # 步进 <= 0，分片循环永不终止、ASR 线程挂死（模块侧另有兜底，这里从配置层拦住）。
         # 钳到 window - 1.0 而不是 window - ε：留 1 秒余量既保证严格正步进，

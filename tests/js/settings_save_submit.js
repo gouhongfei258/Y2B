@@ -2,7 +2,7 @@
 /*
  * 在「最小 DOM 桩」里真实执行设置页主脚本，并模拟点击「保存设置」。
  *
- * 为什么需要它：tests/test_settings_template_layout.py 全是静态字符串断言，
+ * 为什么需要它：tests/app/test_settings_template_layout.py 全是静态字符串断言，
  * 抓不到渲染后 JS 的运行时行为；模板能正常渲染、脚本语法也合法，但提交处理器
  * 可以在发请求之前就抛异常，表现就是「点保存没反应」。
  *
@@ -15,7 +15,7 @@
  * 执行到那行代码才会暴露——所以必须在 DOM 桩里跑一遍提交流程。
  *
  * 用法：node tests/js/settings_save_submit.js <提取出的JS文件>
- *   输入文件由 tests/test_settings_save_submit.py 从渲染后的 /settings 页面提取，
+ *   输入文件由 tests/app/test_settings_save_submit.py 从渲染后的 /settings 页面提取，
  *   内容是页面里那段真实的主 <script> 源码。
  * 输出：单行 JSON（stdout）。
  */

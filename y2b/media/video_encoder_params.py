@@ -185,7 +185,7 @@ _VAAPI_DEVICE = '/dev/dri/renderD128'
 # 列表又为空 —— 源素材 color_space 为对应取值时整任务失败且无任何重试。
 #
 # 取值域由仓库自带 ffmpeg（N-123313）在「libx264 + yuv420p」输出组合下逐个实测
-# 得到（tests/test_video_encoder_params.py 的冒烟断言锁定同一集合）。实测中
+# 得到（tests/media/test_video_encoder_params.py 的冒烟断言锁定同一集合）。实测中
 # 不合法取值有两类失败：`Invalid argument`（常量名不认识）与 `Conversion failed!`
 # （取值在 AVCOL 枚举里有定义，但与 yuv420p 转换不兼容）—— 两类都会让转码失败，
 # 因此都不得进表。
@@ -330,8 +330,8 @@ _X264_PARAMS_OPTS = ('-x264-params', '-x264opts')
 # 而 x264 只认 `gbr`。这一条并不构成表差异：这里仍然统一把 rgb 改写成 gbr ——
 # `rgb` 属于 libx265 未文档化的宽松解析，不同版本未必一致，而 `gbr` 在所有版本
 # 都是正式枚举名。标准化成 gbr 后，两个编码器走同一张表，也就不存在「共用表会
-# 让差异被抹掉」的问题：真出现差异时，tests/test_color_metadata_smoke.py 与
-# tests/test_x265_smoke.py 会分别在各自编码器上失败。
+# 让差异被抹掉」的问题：真出现差异时，tests/media/test_color_metadata_smoke.py 与
+# tests/media/test_x265_smoke.py 会分别在各自编码器上失败。
 #
 # 两张表的引用点分列于 _SOFTWARE_PRIVATE_OPT（选项名不同，这个必须分开）之上。
 
@@ -410,7 +410,7 @@ def _coerce_int(value):
 
     异常边界：本模块声明「公开函数对任意输入都不抛异常」，而 `value == ''` 这类
     比较本身就可能被恶意对象触发任意异常（`__eq__` 抛 RuntimeError 是既有测试
-    tests/test_video_encoder_params.py::ParseEncoderConfigTests 里就在用的手法）。
+    tests/media/test_video_encoder_params.py::ParseEncoderConfigTests 里就在用的手法）。
     原实现只捕获 (TypeError, ValueError, OverflowError)，`build_encoder_params` /
     `build_audio_params` 会因此把 RuntimeError 泄露给调用方 —— 这里放宽到
     Exception（不拦 BaseException，Ctrl-C 等仍正常传播）。
@@ -861,7 +861,7 @@ def _vui_param_pairs(cpu_codec, color_map, custom_params=None):
     枚举名（跳过该键，绝不改写成语义不符的值）。
 
     键顺序固定为 colorprim、transfer、colormatrix；该顺序被
-    tests/test_video_encoder_params.py::X264ColorValueMappingTests 锁定。
+    tests/media/test_video_encoder_params.py::X264ColorValueMappingTests 锁定。
     """
     codec = normalize_cpu_codec(cpu_codec)
     aliases = _SOFTWARE_VUI_ALIASES

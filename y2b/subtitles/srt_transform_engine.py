@@ -128,7 +128,7 @@ class SrtTransformConfig:
 class SrtTransformEngine:
     def __init__(self, config: SrtTransformConfig, logger: Optional[logging.Logger] = None):
         self.config = config
-        self.logger = logger or logging.getLogger("modules.srt_transform_engine")
+        self.logger = logger or logging.getLogger("y2b.subtitles.srt_transform_engine")
 
     @staticmethod
     def _text_density_metrics(text: str) -> Dict[str, float]:

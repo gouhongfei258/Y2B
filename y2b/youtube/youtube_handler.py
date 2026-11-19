@@ -29,7 +29,7 @@ import re
 import tempfile
 
 # 其他导入和常量定义
-logger = logging.getLogger("modules.youtube_handler")
+logger = logging.getLogger("y2b.youtube.youtube_handler")
 # YouTube playlist ID 仅允许字母、数字、下划线和连字符
 _YOUTUBE_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{4,150}$")
 _YOUTUBE_USER_AGENT = (
@@ -555,7 +555,7 @@ def is_docker_env() -> bool:
 
 def merge_streams_with_ffmpeg(task_dir: str, ffmpeg_path: str | None = None, logger: logging.Logger | None = None) -> str | None:
     """Fallback merger for cases where yt-dlp fails during the internal merging phase."""
-    log = logger or logging.getLogger("modules.youtube_handler")
+    log = logger or logging.getLogger("y2b.youtube.youtube_handler")
     task_path = Path(task_dir)
     if not task_path.exists():
         log.warning("手动合并失败: 任务目录不存在")
@@ -712,7 +712,7 @@ def test_video_availability(youtube_url, yt_dlp_cmd, cookies_path=None, logger=N
         tuple: (是否可用, 可用格式列表, 错误信息)
     """
     if not logger:
-        logger = logging.getLogger("modules.youtube_handler")
+        logger = logging.getLogger("y2b.youtube.youtube_handler")
 
     normalized_url = normalize_youtube_url(youtube_url, logger)
     if not normalized_url:

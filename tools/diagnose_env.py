@@ -54,7 +54,7 @@ def describe_youtube_cookies() -> dict:
         return {"exists": False, "size": 0, "netscape": None}
     result = {"exists": True, "size": YT_COOKIES.stat().st_size, "netscape": None}
     try:
-        from modules.tools.convert_cookies import is_netscape_file
+        from y2b.cookies.convert_cookies import is_netscape_file
         result["netscape"] = is_netscape_file(str(YT_COOKIES))
     except Exception:
         result["netscape"] = None
@@ -66,7 +66,7 @@ def _usable_youtube_cookies() -> Path | None:
     if not YT_COOKIES.exists():
         return None
     try:
-        from modules.tools.convert_cookies import convert_any_to_netscape
+        from y2b.cookies.convert_cookies import convert_any_to_netscape
         converted = convert_any_to_netscape(str(YT_COOKIES))
         return Path(converted) if converted else None
     except Exception:

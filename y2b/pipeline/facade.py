@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""运行期回查 ``modules.task_manager`` 上的名字。
+"""运行期回查 ``y2b.pipeline.task_manager`` 上的名字。
 
 拆出去的模块不在导入时引用 task_manager，避免循环导入。调用发生在
 task_manager 完成初始化之后，因此打在公开模块上的 monkeypatch 仍然生效。

@@ -13,7 +13,6 @@
 
 程序内：
     from y2b.cookies.convert_cookies import convert_any_to_netscape
-    # 兼容：from modules.tools.convert_cookies import convert_any_to_netscape
 """
 from __future__ import annotations
 

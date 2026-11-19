@@ -131,7 +131,7 @@ class ImplausibleAsrResultError(RuntimeError):
 class AsrApiClient:
     def __init__(self, config: AsrConfig, logger: Optional[logging.Logger] = None):
         self.config = config
-        self.logger = logger or logging.getLogger("modules.asr_api_client")
+        self.logger = logger or logging.getLogger("y2b.ai.asr_api_client")
         self.client: Any = None
         self._language_hint: str = ''
         self._capability_cache = _AsrCapabilityCache()
