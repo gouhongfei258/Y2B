@@ -58,6 +58,7 @@
 | CookieCloud | 从 CookieCloud 服务自动同步 YouTube Cookies |
 | 安全防护 | 密码保护、暴力破解锁定、会话超时、路径遍历防护 |
 | 维护完善 | 支持日志清理、下载清理、并发控制和 FFmpeg 自动补齐 |
+| 投稿与风控 | 命名投稿模板、bilibili 多账号、上传线路，以及按账号的投稿冷却和下载闸门 |
 
 ## 功能概览
 
@@ -69,9 +70,10 @@
   - 内容安全审核（阿里云 Green）
   - 自动上传到 AcFun / bilibili / 双平台
 - Web 管理后台
-  - 任务列表、人工审核、强制上传
-  - 设置中心分组管理：运行概览、账号与网络、内容审核、AI 模型、字幕处理、语音识别、视频转码、监控与维护、安全
+  - 任务列表、人工审核、强制上传、投稿模板
+  - 设置中心分组：运行与投稿、账号与登录、网络与下载、AI 服务与端点、语音识别、字幕翻译与排版、转码与媒体、消息推送、运维与安全
   - 登录保护、错误次数锁定和密码管理
+  - 同一页操作：任务添加 / 开始 / 上传 / 删除 / 清空 / 重试失败，人工审核里的重试翻译 / 强制上传 / 放弃，任务编辑里的保存与封面替换或还原，设置保存、日志清理、下载清理和卡片重置，以及监控配置的恢复、删除、清空历史和跑完一轮，都留在当前页，用提示和局部刷新更新内容。登录、登出，以及新建或编辑监控配置，仍会进入对应页面。编辑页上的「上传到平台」会先保存再进入人工审核；强制上传时如果还没选分区，会进入任务编辑页补分区。浏览器没有 JavaScript 时，这些表单仍按普通提交跳转
 - YouTube 监控
   - 频道监控与关键词搜索监控
   - 支持 latest / historical 模式、视频类型筛选和自动加入任务队列
@@ -94,38 +96,69 @@
 - 视频转码
   - 支持 CPU / NVIDIA / Intel / AMD 硬件编码
   - 默认优先 HEVC / H.265，失败后自动回退到 H.264
-- 平台认证
-  - AcFun / bilibili 支持 QR 码扫码登录
-  - bilibili 支持 Cookie 导入（Netscape / JSON 格式）
+- 平台认证与投稿
+  - AcFun 仍是单账号，支持 QR 码扫码登录
+  - bilibili 支持多账号：现有 `cookies/bili_cookies.json` 会迁成默认账号；每个账号单独扫码或导入 Cookie（Netscape / JSON），互不覆盖
+  - 每个 bilibili 账号可单独开代理，默认关闭。关闭时直连，不继承 YouTube 代理，也不读取进程里的 `HTTP_PROXY` / `HTTPS_PROXY`
+  - YouTube Cookie 可粘贴后转成 Netscape，写入 `YOUTUBE_COOKIES_PATH`
+  - bilibili 上传线路含旧的 bda2 / bldsa / qn / ws，以及 txa / alia
+  - 命名投稿模板可绑到监控配置；手动加任务也可以另选
+- 下载与投稿闸门
+  - YouTube 确认到人机验证 / 验证码，或 HTTP 429 / 频率限制时熔断下载；普通 403、格式选择失败和分片重试不会触发
+  - 首页和任务页可手动暂停 / 恢复下载
+  - 下载卷剩余空间低于阈值时暂停下载，空间回来后只解除这一项
+  - bilibili 的 preupload 406、投稿 137022、风控 603 按账号计时，只暂停触发的那个账号
 - 维护与环境
   - Windows 可自动补齐 FFmpeg
   - 支持日志清理、下载清理和自定义 FFmpeg 路径
 
 ## 项目结构
 
+Web 层是 Flask 应用工厂。`app/create_app()` 创建应用，路由在 `app/blueprints/`（`auth`、`dashboard`、`tasks`、`settings`、`upload_templates`、`monitor`、`cookies_api`），请求辅助逻辑在 `app/services.py`。页面模板在 `frontend/templates/`，静态资源在 `frontend/static/`。
+
+领域代码在 `y2b/`。仓库里没有 `modules/` 包，导入和打包都使用下面这些路径。
+
 ```text
 Y2A-Auto/
-├── app.py                 # 兼容入口：python app.py
-├── run.py                 # 与 app.py 相同的开发启动
-├── wsgi.py                # WSGI 入口（wsgi:app，导入时完成一次启动）
-├── app/                   # Flask 工厂、Blueprints、请求处理
+├── app.py                 # python app.py：本地开发与 Docker 启动
+├── run.py                 # python run.py：与 app.py 相同
+├── wsgi.py                # 生产 WSGI：加载 wsgi:app，导入时完成一次启动
+├── app/                   # 应用工厂、Blueprints、请求处理
 ├── frontend/
 │   ├── templates/
 │   ├── static/
 │   └── fonts/             # 字幕烧录字体
-├── y2b/                   # pipeline、media、subtitles、youtube、bilibili、acfun、ai；分区映射在 acfun/acfunid/
+├── y2b/
+│   ├── pipeline/          # 任务编排、运行时闸门、上传
+│   ├── media/             # 下载、字幕烧录、FFmpeg
+│   ├── subtitles/
+│   ├── youtube/
+│   ├── bilibili/          # 多账号与上传；SDK 在 y2b/bilibili/bili_sdk/
+│   ├── acfun/
+│   │   └── acfunid/       # 分区映射 id_mapping.json
+│   ├── ai/
+│   ├── notifications/
+│   ├── moderation/
+│   ├── config/            # 配置、投稿模板、预设标签
+│   └── cookies/           # Netscape 转换与 CookieCloud
 ├── requirements.txt
-├── Dockerfile
+├── Dockerfile             # CMD 为 python app.py
 ├── docker-compose.yml
 ├── docker-compose-build.yml
-├── build-tools/
-└── tests/                 # 与 y2b/、app/ 对应的领域目录
+├── build-tools/           # Windows / PyInstaller
+└── tests/
     ├── ai/  app/  bilibili/  config/  cookies/
     ├── js/  media/  moderation/  pipeline/
     └── subtitles/  youtube/
 ```
 
-运行时数据目录仍在仓库根下：`config/`、`cookies/`、`db/`、`downloads/`、`logs/`、`temp/`。
+运行时数据目录仍在仓库根下：`config/`、`cookies/`、`db/`、`downloads/`、`logs/`、`temp/`。字幕字体在 `frontend/fonts/`，AcFun 分区表在 `y2b/acfun/acfunid/id_mapping.json`，bilibili SDK 在 `y2b/bilibili/bili_sdk/`。
+
+测试按领域放在 `tests/ai`、`tests/app`、`tests/bilibili`、`tests/config`、`tests/cookies`、`tests/media`、`tests/moderation`、`tests/pipeline`、`tests/subtitles`、`tests/youtube`。`tests/js/` 是设置页脚本检查，由 `tests/app/` 里的用例在有 Node 时调用。运行：
+
+```bash
+python -m pytest tests/
+```
 
 ## 快速开始
 
@@ -162,6 +195,10 @@ docker compose up -d
 - 重启：`docker compose restart`
 - 日志：`docker compose logs -f`
 
+镜像入口仍是 `python app.py`（`Dockerfile` 与 `Dockerfile.nobuildkit` 的 `CMD`）。compose 文件没有改写这条命令。
+
+构建时 `COPY . .` 会把仓库拷进镜像。`.dockerignore` 里的 `/config/`、`/cookies/` 锚在仓库根，运行数据走卷挂载，`y2b/config/` 与 `y2b/cookies/` 仍会进入镜像。`y2b/acfun/acfunid/id_mapping.json` 和 `frontend/fonts/` 不在忽略列表里，字幕烧录和 AcFun 分区映射都随镜像走。
+
 如需本地构建镜像，可使用：
 
 ```bash
@@ -194,13 +231,23 @@ pip install -r requirements.txt
 python app.py
 ```
 
-访问 `http://127.0.0.1:5000`。
+开发启动任选其一，效果相同：
+
+```bash
+python app.py
+python run.py
+```
+
+二者都通过应用工厂创建 Flask 应用，默认监听 `http://0.0.0.0:5000`（可用环境变量 `PORT` 改端口）。浏览器访问 `http://127.0.0.1:5000`。
+
+生产环境用 WSGI 服务器加载 `wsgi:app`。导入 `wsgi` 时会执行与 `python app.py` 相同的一次启动（`initialize_application()`）。Docker 镜像的启动命令也是 `python app.py`。
 
 ### 方案 C：Windows 便携包
 
 - `build-tools/` 提供 Windows 可执行文件构建工具
 - 官方 Windows Release 包通常已内置 FFmpeg / FFprobe
 - 如果手工打包，保持 `ffmpeg/` 目录完整即可
+- `build-tools/build_exe.py` 的 PyInstaller `datas` 收集 `frontend/templates`、`frontend/static`、`frontend/fonts`、整个 `y2b/`（含 `y2b/bilibili/bili_sdk` 和 `y2b/acfun/acfunid`）、`app/` 和 `app.py`。便携目录里另有一份 `y2b/acfun/acfunid/id_mapping.json`
 
 ### 方案 D：Telegram 转发机器人（可选）
 
@@ -244,11 +291,12 @@ python app.py
 
 - `YOUTUBE_COOKIES_PATH`：YouTube Cookie 路径
 - `ACFUN_COOKIES_PATH`：AcFun Cookie 路径
-- `BILIBILI_COOKIES_PATH`：bilibili Cookie 路径
-- `BILIBILI_SUBMIT_API`：bilibili 投稿接口，`auto`（默认，优先必剪 PC 接口，失败回退 Web）/ `bcut_pc` / `web`（手改成 `bcut` 等别名也会被归一化后再保存）
-- `BILIBILI_UPLOAD_LINE`：bilibili 上传线路，`auto`（默认，六条线路测速）/ `bda2` / `bldsa` / `qn` / `ws` / `txa` / `alia`
-- `BILIBILI_PREUPLOAD_COOLDOWN_MINUTES`：preupload HTTP 406 风控冷却，默认 `30`。窗口内不再请求 Bilibili，也不会因为本地拒绝而刷新到期时间
-- `BILIBILI_SUBMIT_COOLDOWN_MINUTES`：投稿 code 137022 频率冷却，默认 `15`。窗口内不再调用投稿接口；CDN 已传完的文件冷却结束后只重试提交
+- `BILIBILI_COOKIES_PATH`：默认 bilibili 账号的 Cookie 路径，默认 `cookies/bili_cookies.json`。多账号时每个账号另有自己的 Cookie 文件，扫码或导入只写当前账号
+- `BILIBILI_SUBMIT_API`：bilibili 投稿接口，全局生效，`auto`（默认，优先必剪 PC 接口，失败回退 Web）/ `bcut_pc` / `web`（手改成 `bcut` 等别名也会被归一化后再保存）
+- `BILIBILI_UPLOAD_LINE`：bilibili 上传线路，全局生效，`auto`（默认，六条线路测速）/ `bda2` / `bldsa` / `qn` / `ws` / `txa` / `alia`。bda2、bldsa、qn、ws 的探测版本是 `probe_version` `20221109`；txa（腾讯，`upos-cs-upcdntxa`）和 alia（阿里云，`upos-cs-upcdnalia`）使用 `20250923`。线路定义在 `y2b/bilibili/bili_sdk/data/video_uploader_lines.json`
+- `BILIBILI_PREUPLOAD_COOLDOWN_MINUTES`：preupload HTTP 406 冷却，默认 `30`。按账号计时；窗口内不再向这个账号发起整次上传（包括 preupload），本地拒绝也不会把到期时间往后推
+- `BILIBILI_SUBMIT_COOLDOWN_MINUTES`：投稿 code 137022 频率冷却，默认 `15`。按账号计时；窗口内不再调用该账号的投稿接口。137022 不会换通道重试；分 P 已经传完时，冷却结束后只重试提交
+- `BILIBILI_RISK_COOLDOWN_MINUTES`：投稿 code 603（系统检测到异常行为）冷却，默认 `30`。同样只暂停触发的那个账号，其他账号继续投稿。三个计时器互不影响，首页闸门横幅会写出正在冷却的账号
 - `YOUTUBE_PROXY_ENABLED` / `YOUTUBE_PROXY_URL`：YouTube 下载代理
 - `YOUTUBE_API_PROXY_ENABLED` / `YOUTUBE_API_PROXY_URL`：YouTube 监控 API 独立代理，不继承下载代理
 - `YOUTUBE_DOWNLOAD_THREADS`：下载线程数
@@ -266,6 +314,43 @@ python app.py
 > `VIDEO_CPU_CODEC=x265` 还额外要求该 FFmpeg 构建带 `libx265`（需 `--enable-gpl
 > --enable-libx265`，BtbN 与仓库自带版本均满足）。缺失时会自动降级为 `libx264`
 > 并继续烧录，不会因缺库而丢掉整条字幕。
+
+### YouTube Cookie 粘贴
+
+设置 → 账号与登录 → YouTube Cookies → **粘贴 Cookies**。保存后覆盖当前 `YOUTUBE_COOKIES_PATH`（默认 `cookies/yt_cookies.txt`），并转成 Netscape 格式。
+
+接受已经是 Netscape 的文本、Cookie-Editor / EditThisCookie 导出的 JSON，以及 `name=value; name2=value2` 这种请求头。保存结果会说明看起来是不是完整登录。文本框不回填，日志和提示里也不会出现 Cookie 原文。浏览器地址栏的 `document.cookie` 拿不到 HttpOnly 登录 Cookie；会员视频请用扩展导出。无法识别时原文件不改。
+
+### bilibili 多账号与每账号代理
+
+设置 → 账号与登录。第一次运行会把现有 `BILIBILI_COOKIES_PATH` 迁成「默认账号」，不用重新登录。账号清单在 `db/bilibili_accounts.json`。
+
+每个账号有自己的 id、显示名、登录后的 mid / 昵称和 Cookie 文件。一条视频只发到一个 bilibili 账号。仍被任务或投稿模板引用的账号不能删除。AcFun 仍是单账号。
+
+同一个账号同时只投稿一个视频。全局 `MAX_CONCURRENT_UPLOADS` 仍是总上限；要让两个账号并行，把这个值调高。
+
+每个账号的代理默认关闭，等于直连，不继承 YouTube 下载代理。关闭时请求不读取进程环境变量 `HTTP_PROXY` / `HTTPS_PROXY`。打开后接受 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`（也接受 `https`、`socks5h`），用户名和密码可选。该代理用于这个账号的扫码、Cookie 校验，以及 preupload、传文件、提交整条上传路径。两个账号同时上传时，代理设置按账号隔开。
+
+406、137022、603 的冷却写在 `db/runtime_gates.json`，按账号分开。窗口内再次被拒，或本地直接失败，都不会把到期时间往后推，也不会再请求这个账号。
+
+### 投稿模板
+
+导航里的 **投稿模板**。全局设置就是「默认模板」，模板存在 `db/upload_templates.json`。可以另建命名模板。
+
+每个命名模板可以设置：
+
+- 标题、简介模板，占位符 `{title}` `{description}` `{url}` `{channel}` `{date}`
+- 是否追加转载声明。声明留空时仍用「本视频转载自YouTube」；填了就换成自己的
+- 分区策略：继承全局 / AI 推荐 / 固定分区 / AI 推荐但置信度低时回退到固定分区
+- 可选预设标签、翻译开或关、语气提示
+- 默认投稿平台：AcFun / bilibili / 双平台，留空则继承全局 `UPLOAD_TARGET_DEFAULT`
+- 发布到哪个 bilibili 账号，留空则用默认账号
+
+监控配置页可以绑定一个模板。一条配置里的多个频道共用这个模板；格式不同就拆成多条配置。手动添加任务默认用全局模板，也可以在添加框里另选。
+
+解析顺序：任务上指定的模板 > 监控绑定的模板 > 全局默认。任务入队时会记下来源监控、当时用的模板，以及已经落到具体账号上的 bilibili 账号。之后再改模板或更换默认账号，不会改到已经排队的任务。模板页和监控配置页都能看占位符预览。不选模板、只有一个 bilibili 账号、代理保持关闭时，标题、简介、转载声明、分区、预设标签和默认投稿平台仍走全局设置。
+
+上传线路和投稿接口仍然是全局的，不跟着模板或账号走。
 
 ### AI 与投稿
 
@@ -373,10 +458,16 @@ AI 文本功能同时兼容 OpenAI Chat Completions 与 Responses API。`OPENAI_
 
 在「系统设置 → 运行与投稿 → 内容审核（阿里云内容安全）」中可开启视频封面审核，并在高级选项中配置图片审核服务。开启后，本地封面会上传至阿里云进行图片审核，请确保对应区域已开通服务并授予访问权限；调用可能产生额外费用。封面按保守策略审核：低、中、高风险（`low` / `medium` / `high`）均进入人工复审；文件缺失、返回结果异常或审核服务不可用也不会自动放行。详情在人工审核页和任务编辑页显示。关闭封面审核时不上传封面，不影响文本审核。开启后也覆盖既有的待上传任务：下次续跑、失败重试或强制上传前，旧版占位记录、关闭时的记录以及审核失败或异常记录都会补审；已成功上传的平台不会重复投稿。
 
-### 下载质量
+### 下载质量与闸门
 
 - `YOUTUBE_DOWNLOAD_QUALITY_MODE`：下载质量模式
 - `YOUTUBE_DOWNLOAD_MAX_HEIGHT`：最大分辨率高度限制
+
+下载是否继续，还看 `db/runtime_gates.json` 里的三项，进程重启后仍然有效。已经下完、正在编码或上传的任务不受影响。
+
+- **手动暂停**：首页和任务页的「暂停下载 / 恢复下载」。暂停后任务不能进入或继续下载，正在跑的 yt-dlp 会停。手动暂停不会到点自己恢复；点恢复只解除手动暂停，磁盘闸门和人机验证熔断保持原样。
+- **人机验证熔断**：只有确认到人机验证 / 验证码（例如 “not a bot”、captcha、unusual traffic），或者 HTTP 429 / 频率限制，才会熔断。单独的 HTTP 403、格式选择失败、分片重试不会触发。触发前会先按现有逻辑试一次 CookieCloud 刷新；仍然失败才停掉正在跑的 yt-dlp，并且不再开新下载。退避是 1、2、4、8、16、32 分钟，之后封顶 1 小时。已在等待窗口内时不会把到期时间再往后推；到点后等待队列会自动再试一次，再次触发就加长退避。首页红色横幅写原因和下次试探时间。**立即恢复**跳过这一次等待，退避次数还在；**重置熔断**清掉等待和退避计数。
+- **磁盘空间**：阈值是「视频转码与维护」里的 `DOWNLOAD_DISK_FREE_THRESHOLD_GB`（默认 10 GB）。低于阈值时原因是 `disk-low`。空间回到阈值以上后，只自动解除磁盘暂停，手动暂停和人机验证熔断保持原样。
 
 ### 字幕后处理
 
@@ -470,11 +561,12 @@ QC 会先用规则做硬拦截，只有边界样本才会调用 AI 严格复核�
 1. 在首页或任务页提交 YouTube 链接创建任务。
 2. 自动模式下流程为：下载 -> ASR / 字幕处理（可选） -> AI 元信息 -> 审核 -> 上传目标平台。
 3. 在人工审核页可调整标题、简介、标签、分区并强制上传。
-4. 启用 YouTube 监控后，可按频道或关键词定时拉取任务，并自动加入任务队列；只想搬运标题命中特定内容的视频（如某个频道的 ASMR）时，在监控配置里填写「标题包含关键词」并选择「任一 / 全部」匹配。
-5. 在设置页可分组维护账号、AI、字幕、ASR、转码、维护与安全项。
-6. AcFun / bilibili 支持 QR 码扫码登录：在设置页点击「扫码登录」，用手机 App 扫码即可完成认证。
-7. 如已部署 CookieCloud 服务，可在设置页配置后一键同步 YouTube Cookies，无需手动导出。
+4. 启用 YouTube 监控后，可按频道或关键词定时拉取任务，并自动加入任务队列；只想搬运标题命中特定内容的视频（如某个频道的 ASMR）时，在监控配置里填写「标题包含关键词」并选择「任一 / 全部」匹配。需要固定标题、简介、分区或 bilibili 账号时，给这条监控配置绑定一个投稿模板。
+5. 在设置页按分组维护运行与投稿、账号与登录、网络与下载、AI、语音识别、字幕、转码、消息推送、运维与安全。这些保存和清理操作留在设置页。
+6. AcFun 与 bilibili 默认账号支持 QR 码扫码登录：在设置页点击「扫码登录」，用手机 App 扫码即可完成认证。bilibili 还可以添加更多账号，并为每个账号单独配置代理。
+7. YouTube Cookie 可以放文件、在设置页粘贴（会转成 Netscape），或在部署了 CookieCloud 后一键同步。
 8. 启用通知推送后，任务状态变化和登录事件会自动推送到企业微信等渠道。
+9. 首页横幅会显示下载暂停、磁盘不足、YouTube 熔断，以及正在冷却的 bilibili 账号。编码和上传中的任务不会因为下载闸门停下来。
 
 ## FFmpeg 与硬件加速
 
@@ -524,6 +616,7 @@ group_add:
 - 支持标题包含关键词过滤（任一 / 全部匹配），可只搬运标题命中特定内容的视频（如某个频道的 ASMR）；多个关键词用逗号或空格分隔，含空格的短语用引号包住（如 `"deep sleep"`）
 - 支持视频类型筛选：video / short / live
 - 可设置自动添加到任务队列，并保留监控历史记录
+- 每条监控配置可以绑定一个投稿模板，这条配置里的频道共用该模板
 - 配置文件会保存到 `config/youtube_monitor/`，历史数据库位于 `db/youtube_monitor.db`
 
 ## 通知推送
@@ -584,8 +677,9 @@ ssh -N -L 5000:127.0.0.1:5000 -o ServerAliveInterval=30 user@<服务器公网IP>
 连接建立后，在本地浏览器打开 `http://localhost:5000`。如果确实需要长期公网访问，请先启用 Web 密码保护，通过反向代理配置 HTTPS，并将云防火墙和主机防火墙的入站来源限制为可信 IP 或网段。
 
 - 403 / 需要登录 / not a bot
-  - 通常是 YouTube 反爬或权限问题，更新 `cookies/yt_cookies.txt`
+  - 通常是 YouTube 反爬或权限问题，更新 `cookies/yt_cookies.txt`，或在设置页粘贴 Cookie
   - 也可通过 CookieCloud 自动同步，免去手动导出
+  - 确认到人机验证或 HTTP 429 时，下载会进入熔断并暂停新的下载。首页可以「立即恢复」或「重置熔断」。普通 403 不会单独触发熔断
 - 找不到 FFmpeg / yt-dlp
   - Docker 环境通常无需处理；本地运行请确保 PATH 正确
   - 如果使用 Windows Release 包，通常不应出现缺失 FFmpeg；若出现，请确认 `ffmpeg/` 未被安全软件隔离
@@ -593,8 +687,9 @@ ssh -N -L 5000:127.0.0.1:5000 -o ServerAliveInterval=30 user@<服务器公网IP>
   - 更新 `cookies/ac_cookies.json`，或在设置页使用 QR 码重新扫码登录
   - 检查人工审核页元信息是否合规
 - 上传 bilibili 失败
-  - 更新 `cookies/bili_cookies.json`，或在设置页使用 QR 码重新扫码登录
-  - 报 603「系统检测到异常行为」属于账号级风控：默认的 `auto` 投稿接口会先走必剪 PC 接口，失败再回退 Web；两条通道都被拦截时，请先用浏览器登录同一账号在创作中心手动投稿一次，或按提示完成实名/客服申诉，并保持出口 IP 稳定、降低投稿频率
+  - 更新对应账号的 Cookie（默认账号仍是 `cookies/bili_cookies.json`），或在设置页对该账号使用 QR 码重新扫码登录
+  - preupload 返回 HTTP 406、投稿 code 137022 或 603 时，只冷却触发的那个账号，其他账号继续投稿。窗口长度分别由 `BILIBILI_PREUPLOAD_COOLDOWN_MINUTES`（默认 30）、`BILIBILI_SUBMIT_COOLDOWN_MINUTES`（默认 15）、`BILIBILI_RISK_COOLDOWN_MINUTES`（默认 30）决定
+  - 报 603「系统检测到异常行为」属于该账号的风控：默认的 `auto` 投稿接口会先走必剪 PC 接口，失败再回退 Web；两条通道都被拦截时，请先用浏览器登录同一账号在创作中心手动投稿一次，或按提示完成实名/客服申诉，并保持出口 IP 稳定、降低投稿频率。该账号的代理默认关闭；若开启，确认地址只作用于这个账号
 - 字幕翻译慢
   - 调整并发与批量大小，同时注意 API 限速
 - Docker 未启用 NVENC
